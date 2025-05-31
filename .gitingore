@@ -1,0 +1,28 @@
+# Virtual environment
+venv/
+.venv/
+
+# Python bytecode and cache
+__pycache__/
+*.py[cod]
+
+# Distribution / packaging
+build/
+dist/
+*.egg-info/
+
+# Testing
+.pytest_cache/
+.coverage
+
+# IDE/editor files
+.vscode/
+.idea/
+
+# OS files
+.DS_Store
+
+# Environment variable files (often contain secrets)
+.env
+
+*.txt

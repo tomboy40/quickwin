@@ -1,0 +1,32 @@
+pipeline:
+  api:
+    baseUrl: 'https://api.example.com/data?offset=0&limit=500'
+    timeout: 30
+    retryCount: 3
+    retryWait: 10
+    retryConditions:
+      - status: 429
+        waitSeconds: 30  # Rate limiting
+      - status: 503
+        waitSeconds: 60  # Service unavailable
+
+  email:
+    recipients: 'receiver1@example.com, receiver2@example.com'
+    subject: '[Action Required] YTD Incident Hygiene Report'
+    mimeType: 'text/html'
+    contacts:
+      support: 'tom@a.com'
+      supportName: 'Tom'
+
+  dateFormats:
+    api: 'yyyyMMdd'
+    file: 'ddMMM'
+    display: 'dd MMM yyyy'
+    timestamp: 'yyyy-MM-dd HH:mm:ss'
+
+  schedule:
+    cron: 'H 18 1 * * | H 18 * * 0'  # 6 PM on both Sundays and 1st of each month
+
+  links:
+    guidelines: 'TMC URL link'
+    dataSource: 'TOQ' 

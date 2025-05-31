@@ -1,0 +1,55 @@
+{
+    "id": "36110337",
+    "type": "page",
+    "status": "current",
+    "title": "Tools Survey",
+    "macroRenderedOutput": {},
+    "body": {
+        "storage": {
+            "value": "<ac:structured-macro ac:name=\"pivot-table\" ac:schema-version=\"1\" data-layout=\"default\" ac:local-id=\"436a9a5a-037e-4dbf-8bdb-84555331c8cd\" ac:macro-id=\"41ffb785-fc47-4b68-b6c2-53203fe6dbf1\"><ac:parameter ac:name=\"dateaccuracy\">Day</ac:parameter><ac:parameter ac:name=\"hideLongTitle\">false</ac:parameter><ac:parameter ac:name=\"showrawdata\">true</ac:parameter><ac:parameter ac:name=\"hideTotal\">false</ac:parameter><ac:parameter ac:name=\"hidePane\">false</ac:parameter><ac:parameter ac:name=\"tabs\">false</ac:parameter><ac:parameter ac:name=\"column\">Class</ac:parameter><ac:parameter ac:name=\"decimalseparator\">Point (.)</ac:parameter><ac:parameter ac:name=\"aggregation\">App</ac:parameter><ac:parameter ac:name=\"type\">Count</ac:parameter><ac:parameter ac:name=\"cumulative\">false</ac:parameter><ac:parameter ac:name=\"version\">3</ac:parameter><ac:parameter ac:name=\"macroMarker\">1745598640654_126</ac:parameter><ac:parameter ac:name=\"collapseAll\">false</ac:parameter><ac:parameter ac:name=\"isFirstTimeEnter\">true</ac:parameter><ac:parameter ac:name=\"literalseparator\">, </ac:parameter><ac:parameter ac:name=\"plainText\">false</ac:parameter><ac:parameter ac:name=\"datepattern\">dd M yy</ac:parameter><ac:parameter ac:name=\"customNoTableMsg\">false</ac:parameter><ac:parameter ac:name=\"row\">Enabled</ac:parameter><ac:parameter ac:name=\"worklog\">365|5|8|y w d h m|y w d h m</ac:parameter><ac:parameter ac:name=\"formatVersion\">3</ac:parameter><ac:parameter ac:name=\"vvpattern\">v</ac:parameter><ac:parameter ac:name=\"numberaccuracy\" /><ac:parameter ac:name=\"ddSeparator\" /><ac:parameter ac:name=\"customNoTableMsgText\" /><ac:parameter ac:name=\"separator\" /><ac:parameter ac:name=\"decimals\" /><ac:rich-text-body><ac:adf-fragment-mark><ac:adf-fragment-mark-detail name=\"Table 1\" local-id=\"aa73eaf9-289d-4d21-b989-88a5df2a02ac\" /></ac:adf-fragment-mark><table data-table-width=\"760\" data-layout=\"default\" ac:local-id=\"f0833c41-2f94-4d3f-9ae2-bed61e041b82\"><tbody><tr><th><p><strong>Class</strong></p></th><th><p><strong>App</strong></p></th><th><p><strong>Enabled</strong></p></th><th><p><strong>Owner</strong></p></th></tr><tr><td><p>Clazz1</p></td><td><p>App_1</p></td><td><p><ac:structured-macro ac:name=\"status\" ac:schema-version=\"1\" ac:macro-id=\"6129c0b5-db9b-46a0-8498-2eb6310379e6\"><ac:parameter ac:name=\"colour\">Blue</ac:parameter><ac:parameter ac:name=\"title\">N/A</ac:parameter></ac:structured-macro> </p></td><td><p>Tom</p></td></tr><tr><td><p>Clazz2</p></td><td><p>App_2</p></td><td><p><ac:structured-macro ac:name=\"status\" ac:schema-version=\"1\" ac:macro-id=\"aae32db1-a498-44e0-b242-9f4fc21a9bf5\"><ac:parameter ac:name=\"colour\">Green</ac:parameter><ac:parameter ac:name=\"title\">Yes</ac:parameter></ac:structured-macro> </p></td><td><p>Jerry</p></td></tr><tr><td><p>Clazz2</p></td><td><p>App_3</p></td><td><p><ac:structured-macro ac:name=\"status\" ac:schema-version=\"1\" ac:macro-id=\"2cc41d71-a151-48fe-86a0-d91a573ac21e\"><ac:parameter ac:name=\"colour\">Yellow</ac:parameter><ac:parameter ac:name=\"title\">No</ac:parameter></ac:structured-macro> </p></td><td><p>Rich</p></td></tr><tr><td><p>Clazz3</p></td><td><p>App_4</p></td><td><p><ac:structured-macro ac:name=\"status\" ac:schema-version=\"1\" ac:macro-id=\"b34f4ea4-a769-440e-b11f-5f3b22aecc45\"><ac:parameter ac:name=\"colour\">Yellow</ac:parameter><ac:parameter ac:name=\"title\">No</ac:parameter></ac:structured-macro> </p></td><td><p>Mia</p></td></tr></tbody></table></ac:rich-text-body></ac:structured-macro><p />",
+            "representation": "storage",
+            "embeddedContent": [],
+            "_expandable": {
+                "content": "/rest/api/content/36110337"
+            }
+        },
+        "_expandable": {
+            "editor": "",
+            "atlas_doc_format": "",
+            "view": "",
+            "export_view": "",
+            "styled_view": "",
+            "dynamic": "",
+            "editor2": "",
+            "anonymous_export_view": ""
+        }
+    },
+    "extensions": {
+        "position": 2201
+    },
+    "_expandable": {
+        "container": "/rest/api/space/~712020dae141a58f43418d86e706455ecad234",
+        "metadata": "",
+        "restrictions": "/rest/api/content/36110337/restriction/byOperation",
+        "history": "/rest/api/content/36110337/history",
+        "version": "",
+        "descendants": "/rest/api/content/36110337/descendant",
+        "space": "/rest/api/space/~712020dae141a58f43418d86e706455ecad234",
+        "childTypes": "",
+        "schedulePublishInfo": "",
+        "operations": "",
+        "schedulePublishDate": "",
+        "children": "/rest/api/content/36110337/child",
+        "ancestors": ""
+    },
+    "_links": {
+        "editui": "/pages/resumedraft.action?draftId=36110337",
+        "webui": "/spaces/~712020dae141a58f43418d86e706455ecad234/pages/36110337/Tools+Survey",
+        "edituiv2": "/spaces/~712020dae141a58f43418d86e706455ecad234/pages/edit-v2/36110337",
+        "context": "/wiki",
+        "self": "https://tomzptan.atlassian.net/wiki/rest/api/content/36110337",
+        "tinyui": "/x/AQAnAg",
+        "collection": "/rest/api/content",
+        "base": "https://tomzptan.atlassian.net/wiki"
+    }
+}
