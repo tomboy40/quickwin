@@ -1,0 +1,13 @@
+{
+    "widgets": [
+        {
+            "uuid": "bab95821-183d-4406-89f3-0e3197be31b2",
+            "editLink": "system_report_templ.do?javr_report_id=sdfsdoer234fd",
+            "properties": {
+                "shown_header": "true",
+                "redner": "com.ui.portal.RenderReport"
+            },
+            "content": "<span style='display: none'>IT BUM</span><input type=\"hidden\" name=\"test\"></input><table id=\"tbl01asdfsafd\"></table class=\"sr-only\"><span class=\"sr-only\"/><caption class=\"sr-only\"><span>SLA</span></caption><thead><tr><th><div>Empty Column</div></th><th><span>Actions</span></th><th name=\"task\"><span class=\"header_container\"><a class=\"list_header\">Task</a><span class=\"sort-ico\"><a class=\"col-change\"><i class=\"sort-ico\"/></a></span></th><th><span>Actions</span></th><th name=\"task\"><span class=\"header_container\"><a class=\"list_header\">Level 6</a><span class=\"sort-ico\"><a class=\"col-change\"><i class=\"sort-ico\"/></a></span></th></tr></thead><tbody class=\"header\"><tr><td class=\"list_cell\"/><td class=\"list_cell\"/><td class=\"list_cell\"><a class=\"linked\">PTASK001010010</a></td><td class=\"list_cell\"><a class=\"linked\">Reg Fin Tech</a></td></tr><tr><td class=\"list_cell\"/><td class=\"list_cell\"/><td class=\"list_cell\"><a class=\"linked\">PTASK001010011</a></td><td class=\"list_cell\"><a class=\"linked\">Reg &amp; Tech</a></td></tr></tbody></table><div><table><tr><td><span><button>First</button></span></td><td><span><button>Last</button></span></td></tr></table></div>"
+        }
+    ]
+}

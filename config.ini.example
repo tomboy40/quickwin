@@ -1,0 +1,30 @@
+# Copy this to config.ini and fill in your actual values
+
+[proxy]
+# Proxy Configuration
+host = proxy.example.com
+user = your_proxy_username
+pass = your_proxy_password
+
+[api]
+# API Configuration
+report_url = https://api.example.com/report
+
+[snow]
+# ServiceNow Configuration
+proxy_user = your_proxy_username
+proxy_pass = your_proxy_password
+proxy_host = proxy.example.com
+user_email = your_email@example.com
+user_password = your_password
+homepage_url = https://your-instance.service-now.com
+saml_acs_url = https://your-instance.service-now.com/navpage.do
+report_url = https://your-instance.service-now.com/api/now/table/incident
+report_request_payload = {"short_description": "Test incident"}
+referer = https://your-instance.service-now.com
+x_user_token = your_user_token
+
+[ssl]
+# SSL Configuration
+disable_warnings = true
+verify = false

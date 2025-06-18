@@ -1,0 +1,941 @@
+import logging
+import os
+import re
+import sys
+import html
+import time
+from urllib.parse import urljoin, urlencode
+import json
+
+# Third-party imports
+import requests
+from dotenv import load_dotenv
+
+# --- Constants ---
+MAX_REDIRECTS = 10
+DEFAULT_OUTPUT_FILENAME = "output.html"
+DEBUG_FILE_PREFIX = "debug_"
+MICROSOFT_LOGIN_DOMAIN = "login.microsoftonline.com"
+DEFAULT_I19_VALUE = 1000 # Default value for i19 if calculated value is non-positive
+DEFAULT_REQUEST_TIMEOUT = 30 # Default timeout for HTTP requests in seconds
+
+# Mappings for content types to file extensions and binary mode
+CONTENT_TYPE_MAPPINGS = {
+    'text/html': ('.html', False),
+    'application/json': ('.json', False),
+    'application/pdf': ('.pdf', True),
+    'application/xml': ('.xml', False),
+    'text/xml': ('.xml', False),
+    'text/plain': ('.txt', False),
+}
+
+# --- Logging Configuration ---
+logging.basicConfig(
+    level=logging.DEBUG,
+    format='%(asctime)s - %(levelname)s - %(message)s'
+)
+
+# --- Utility Functions ---
+
+def log_session_cookies(session, title="Session Cookies"):
+    """Logs cookies currently stored in the requests.Session object."""
+    logging.info(f"--- {title} ---")
+    if session.cookies:
+        for cookie in session.cookies:
+            logging.info(
+                f"  Name: {cookie.name}, Value: {cookie.value}, "
+                f"Domain: {cookie.domain}, Path: {cookie.path}, "
+                f"Expires: {cookie.expires}"
+            )
+    else:
+        logging.info("  Session holds no cookies.")
+    logging.info("-" * (len(title) + 6))
+
+def log_response_headers(response, title="Response Headers"):
+    """Logs the headers received in a server response."""
+    logging.info(f"--- {title} (Status: {response.status_code}) ---")
+    if not response.headers:
+        logging.info("  (No headers received in response)")
+    else:
+        for key, value in response.headers.items():
+            logging.info(f"  {key}: {value}")
+    logging.info("-" * (len(title) + 6))
+
+def save_content_to_file(content, filename=DEFAULT_OUTPUT_FILENAME, is_binary=False):
+    """Saves the given content (string or bytes) to a file."""
+    mode = "wb" if is_binary else "w"
+    encoding = None if is_binary else "utf-8"
+    try:
+        with open(filename, mode, encoding=encoding) as f:
+            f.write(content)
+        logging.info(f"--- Successfully saved content to: {filename} ---")
+    except IOError as e:
+        logging.error(f"--- ERROR: Could not write to file '{filename}': {e} ---")
+    except Exception as e:
+        logging.error(f"--- ERROR: Unexpected error writing file '{filename}': {e} ---")
+
+def log_request_headers(headers_dict, title="Request Headers", session=None):
+    """Logs a dictionary of request headers, redacting sensitive ones, and optionally session headers."""
+    logging.info(f"--- {title} ---")
+    if session and session.headers:
+        logging.info("  --- Session Default Headers ---")
+        for key, value in session.headers.items():
+             key_lower = key.lower()
+             if key_lower in ('cookie', 'authorization', 'proxy-authorization'):
+                 logging.info(f"  {key}: [{key.title()} Present - Redacted]")
+             else:
+                 logging.info(f"  {key}: {value}")
+        logging.info("  -----------------------------")
+
+    if not headers_dict:
+        logging.info("  (No specific headers to display)")
+    else:
+        logging.info("  --- Specific Request Headers ---")
+        headers_to_print = dict(headers_dict)
+        for key, value in headers_to_print.items():
+            key_lower = key.lower()
+            if key_lower in ('cookie', 'authorization', 'proxy-authorization'):
+                logging.info(f"  {key}: [{key.title()} Present - Redacted]")
+            else:
+                logging.info(f"  {key}: {value}")
+        logging.info("  ------------------------------")
+
+    logging.info("-" * (len(title) + 6))
+
+# --- Configuration ---
+
+def _get_proxy_config(user, password, host):
+    """Builds the proxy dictionary if credentials are provided."""
+    if not user or not password:
+        logging.warning("SNOW_PROXY_USER or SNOW_PROXY_PASS not set. No proxy used.")
+        return None
+    else:
+        proxy_url = f"http://{user}:{password}@{host}:8080"
+        logging.info(f"Proxy configured: {proxy_url.split('@')[1]}")
+        return {'https': proxy_url}
+
+def get_config():
+    """Reads and validates configuration from environment variables."""
+    load_dotenv()
+    config = {
+        'report_url': os.environ.get('SNOW_REPORT_URL'),
+        'proxy_user': os.environ.get('SNOW_PROXY_USER'),
+        'proxy_pass': os.environ.get('SNOW_PROXY_PASS'),
+        'proxy_host': os.environ.get('SNOW_PROXY_HOST'),
+        'user_email': os.environ.get('SNOW_USER_EMAIL'),
+        'user_password': os.environ.get('SNOW_USER_PASSWORD'),
+        'report_request_payload': os.environ.get('SNOW_REPORT_DAT'),
+        'idp_sso_url': os.environ.get('SNOW_IDP_SSO_URL'), # New config for IdP SSO URL
+        'saml_issuer': os.environ.get('SNOW_SAML_ISSUER'), # SAML Issuer (SP Entity ID)
+        'saml_acs_url': os.environ.get('SNOW_SAML_ACS_URL'), # SAML Assertion Consumer Service URL
+        'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+        'accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
+        'accept_language': 'en-US,en;q=0.9',
+        'referer': os.environ.get('SNOW_INIT_REFERER'),
+        'connection_header': 'keep-alive',
+        'upgrade_insecure_requests': '1',
+        'x_user_token': os.environ.get('SNOW_USER_TOKEN'),
+        'disable_ssl_warnings': os.environ.get('DISABLE_SSL_WARNINGS', 'true').lower() == 'true',
+        'ssl_verify': os.environ.get('SSL_VERIFY', 'false').lower() == 'true'
+    }
+    required_vars = ['report_url', 'user_email', 'user_password', 'idp_sso_url', 'saml_issuer', 'saml_acs_url']
+    missing_vars = [var for var in required_vars if not config.get(var)]
+    if missing_vars:
+        missing_env_vars = [f'SNOW_{v.upper()}' for v in missing_vars]
+        logging.error(f"Missing required environment variables: {', '.join(missing_env_vars)}")
+        sys.exit(1)
+    config['proxies'] = _get_proxy_config(config['proxy_user'], config['proxy_pass'], config['proxy_host'])
+    if not config['ssl_verify']:
+        logging.warning("SSL certificate verification is DISABLED.")
+        if config['disable_ssl_warnings']:
+            requests.packages.urllib3.disable_warnings(
+                requests.packages.urllib3.exceptions.InsecureRequestWarning
+            )
+            logging.warning("Urllib3 InsecureRequestWarning is disabled.")
+    else:
+        logging.info("SSL certificate verification is ENABLED.")
+    return config
+
+# --- Session Setup ---
+
+def _build_default_headers(config):
+    """Builds the initial dictionary of request headers."""
+    headers = {
+        'User-Agent': config['user_agent'],
+        'Accept': config['accept'],
+        'Accept-Language': config['accept_language'],
+        'Connection': config.get('connection_header', 'keep-alive'),
+        'Upgrade-Insecure-Requests': config.get('upgrade_insecure_requests', '1'),
+        'Sec-Fetch-Dest': 'document', # Default for initial navigation
+        'Sec-Fetch-Mode': 'navigate', # Default for initial navigation
+        'Sec-Fetch-Site': 'none',     # Default for initial navigation
+        'Sec-Fetch-User': '?1',       # Default for initial navigation
+        'Priority': 'u=0, i',
+        'Sec-Ch-Ua': '"Chromium";v="136", "Google Chrome";v="136", "Not.A/Brand";v="99"',
+        'Sec-Ch-Ua-Mobile': '?0',
+        'Sec-Ch-Ua-Platform': '"Windows"',
+    }
+    if config.get('x_user_token'):
+         headers['X-UserToken'] = config['x_user_token']
+    return headers
+
+def setup_session(config):
+    """Creates and configures the requests session."""
+    session = requests.Session()
+    session.headers.update(_build_default_headers(config))
+    session.proxies = config.get('proxies')
+    session.verify = config.get('ssl_verify', False)
+    return session
+
+# --- Authentication Flow Steps ---
+
+# --- SAML Request Generation Helper Functions ---
+
+import base64
+import urllib.parse
+import zlib
+import uuid
+from datetime import datetime, timezone
+
+def generate_saml_request(issuer, acs_url, destination):
+    """
+    Generate a SAML 2.0 AuthnRequest string (URL-encoded, base64-encoded, DEFLATE compressed)
+    suitable for HTTP-Redirect binding.
+
+    Args:
+        issuer (str): The entity ID of the Service Provider (SP).
+        acs_url (str): Assertion Consumer Service URL where the IdP should post the response.
+        destination (str): The SSO endpoint URL of the Identity Provider (IdP).
+
+    Returns:
+        str: The URL-encoded SAMLRequest parameter value.
+    """
+    # Generate a unique ID for the request
+    request_id = 'SNC' + uuid.uuid4().hex
+
+    # Current time in UTC, formatted per SAML spec
+    issue_instant = datetime.utcnow().replace(tzinfo=timezone.utc).isoformat(timespec='milliseconds').replace('+00:00', 'Z')
+
+    # Build the AuthnRequest XML
+    authn_request_xml = f"""<saml2p:AuthnRequest xmlns:saml2p="urn:oasis:names:tc:SAML:2.0:protocol"
+    AssertionConsumerServiceURL="{acs_url}"
+    Destination="{destination}"
+    ForceAuthn="false"
+    ID="{request_id}"
+    IsPassive="false"
+    IssueInstant="{issue_instant}"
+    ProtocolBinding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST"
+    ProviderName="{acs_url}"
+    Version="2.0">
+        <saml2:Issuer xmlns:saml2="urn:oasis:names:tc:SAML:2.0:assertion">{issuer}</saml2:Issuer><saml2p:NameIDPolicy AllowCreate="true" Format="urn:oasis:names:tc:SAML:1.1:nameid-format:unspecified"/>
+    </saml2p:AuthnRequest>"""
+
+    # Compress the XML using DEFLATE (raw, -15 window bits)
+    deflated = zlib.compress(authn_request_xml.encode('utf-8'))[2:-4]  # strip zlib headers and checksum
+
+    # Base64 encode
+    b64_encoded = base64.b64encode(deflated)
+
+    # URL-encode
+    url_encoded = urllib.parse.quote_plus(b64_encoded)
+
+    return url_encoded
+
+# --- End SAML Request Generation Helper Functions ---
+def _generate_saml2_url(config):
+    """Constructs the SAML2 request URL and returns it."""
+    logging.info("--- Step 2b: Constructing SAML2 Request URL ---")
+
+    # Get necessary config values
+    # saml_issuer = "https://hsbcitid.service-now.com"
+    # saml_acs_url = "https://hsbcitid.service-now.com/navpage.do"
+    # idp_sso_url = "https://login.microsoftonline.com/e0fd434d-ba64-497b-90d2-859c472e1a92/saml2"
+    idp_sso_url = config.get('idp_sso_url')
+    saml_issuer = config.get('saml_issuer')
+    saml_acs_url = config.get('saml_acs_url')
+    report_url = config.get('report_url') # Use report_url as the initial target URL
+
+    if not all([idp_sso_url, saml_issuer, saml_acs_url, report_url]):
+        logging.error("Missing required configuration for SAML request generation.")
+        return None
+
+    # Generate the SAML request string
+    saml_request_string = generate_saml_request(saml_issuer, saml_acs_url, idp_sso_url)
+
+    # Construct the final SAML2 URL
+    saml2_url = f"{idp_sso_url}?SAMLRequest={saml_request_string}"
+
+    logging.info(f"Constructed SAML2 Request URL: {saml2_url}")
+
+    # We no longer fetch the SAML2 page directly here.
+    # The next step in the flow will use this URL.
+    return saml2_url
+
+# --- Login Page Data Extraction and Payload Building ---
+
+def _extract_initial_config(html_content):
+    """
+    Extracts login configuration from embedded JSON in HTML ($Config).
+
+    Args:
+        html_content (str): The HTML source code of the Microsoft login page.
+
+    Returns:
+        dict: The extracted configuration dictionary (canary, sCtx, sessionId, sFT),
+              or None if extraction fails.
+    """
+    logging.info("Attempting to extract $Config JSON from HTML using regex.")
+    config_match = re.search(r'\$Config\s*=\s*({.*?});', html_content, re.DOTALL)
+    if not config_match:
+        logging.error("Could not find $Config JSON object assignment in HTML.")
+        return None
+    json_string = config_match.group(1)
+    logging.debug(f"Extracted JSON string snippet: {json_string[:200]}...")
+    try:
+        config_data = json.loads(json_string)
+        logging.debug("$Config JSON parsed successfully.")
+    except json.JSONDecodeError as e:
+        logging.error(f"Failed to parse $Config JSON: {e}")
+        logging.error(f"Problematic JSON string snippet: {json_string[:500]}...")
+        return None
+    try:
+        config = {
+            'apiCanary': config_data.get('apiCanary'),
+            'canary': config_data.get('canary'),
+            'sCtx': config_data.get('sCtx'),
+            'sessionId': config_data.get('sessionId'),
+            'sFT': config_data.get('sFT'), # Flow Token
+            'sTenantId': config_data.get('sTenantId'),
+            'sErrorCode': config_data.get('sErrorCode')
+        }
+        # if not all(initial_config.values()):
+        #     missing_keys = [k for k, v in initial_config.items() if not v]
+        #     logging.error(f"Missing required keys in parsed $Config JSON: {', '.join(missing_keys)}")
+        #     return None
+        logging.info("Successfully extracted canary, sCtx, sessionId, sFT, and sTenantId from $Config.")
+        logging.debug(f"Extracted config data: {config}") # Added logging
+        return config
+    except KeyError as e:
+        logging.error(f"KeyError while accessing required fields in $Config JSON: {e}")
+        return None
+    except Exception as e:
+         logging.exception(f"An unexpected error occurred during JSON value extraction: {e}")
+         return None
+
+# --- Login Attempt Helper Functions ---
+
+
+def _calculate_i19_value(page_load_end_time_ms):
+    """Calculates the i19 value for Microsoft login payloads."""
+    current_time_ms = int(time.time() * 1000)
+    i19_value = current_time_ms - page_load_end_time_ms
+    # Ensure i19 is not negative, set to a small positive if it is (e.g. due to clock sync issues or very fast execution)
+    if i19_value <= 0:
+        logging.warning(f"Calculated i19 value was {i19_value}. Setting to a default small positive value (e.g., {DEFAULT_I19_VALUE}ms).")
+        i19_value = DEFAULT_I19_VALUE # Default to 1 second if calculation is off
+    return i19_value
+
+def _build_login_payload(email, password, config, page_load_end_time_ms):
+    """Builds the payload dictionary for the final login POST request."""
+    i19_value = _calculate_i19_value(page_load_end_time_ms)
+
+    payload = {
+        "i13": 0,
+        "login": email,
+        "loginfmt": email,
+        "type": 11,
+        "LoginOptions": 3,
+        "lrt": "",
+        "lrtPartition": "",
+        "hisRegion": "",
+        "hisScaleUnit": "",
+        "passwd": password,
+        "ps": 2,
+        "psRNGCDefaultType": "",
+        "psRNGCEntropy": "",
+        "psRNGCSLK": "",
+        "canary": config['canary'],
+        "ctx": config['sCtx'],
+        "hpgrequestid": config['sessionId'],
+        "flowToken": config['sFT'],
+        "PPSX": "",
+        "NewUser": 1,
+        "FoundMSAs": "",
+        "fspost": 0,
+        "i21": 0,
+        "CookieDisclosure": 0,
+        "IsFidoSupported": 1,
+        "isSignupPost": 0,
+        "DfpArtifact": "",
+        "i19": i19_value
+    }
+    logging.debug(f"Final Login Payload Dict (i19={i19_value}, password redacted): {{k: v for k, v in payload.items() if k != 'passwd'}}")
+    return payload
+
+def _build_login_headers(saml2_url):
+    """Builds headers specific to the final login POST request."""
+    # Rely on session for common headers (User-Agent, Accept-Language, Sec-Ch-*, etc.)
+    # Note: Accept, Connection, Upgrade-Insecure-Requests are likely already in session defaults
+    return {
+        'Referer': saml2_url,
+        'Origin': f"https://{MICROSOFT_LOGIN_DOMAIN}",
+        'Content-Type': 'application/x-www-form-urlencoded', # Specific content type
+        'Sec-Fetch-Dest': 'document', # Specific fetch metadata
+        'Sec-Fetch-Mode': 'navigate', # Specific fetch metadata
+        'Sec-Fetch-Site': 'same-origin', # Specific fetch metadata
+        'Sec-Fetch-User': '?1', # Specific fetch metadata
+        'Priority': 'u=0, i', # Specific priority (different from others)
+    }
+
+# --- Helper functions for login flow ---
+
+def _build_kmsi_payload(config, page_load_end_time_ms):
+    """Builds the payload dictionary for the KMSI POST request."""
+    i19_value = _calculate_i19_value(page_load_end_time_ms)
+
+    payload = {
+        "LoginOptions": 3,
+        "type": 28,
+        "ctx": config['sCtx'],
+        "hpgrequestid": config['sessionId'],
+        "flowToken": config['sFT'],
+        "canary": config['canary'],
+        "i19": i19_value
+    }
+    logging.debug(f"KMSI Payload Dict: {payload}")
+    return payload
+
+def _build_kmsi_headers(login_url):
+    """Builds headers specific to the KMSI POST request."""
+    # Rely on session for common headers (User-Agent, Accept-Language, Sec-Ch-*, etc.)
+    return {
+        'Referer': login_url,
+        'Origin': f"https://{MICROSOFT_LOGIN_DOMAIN}",
+        'Content-Type': 'application/x-www-form-urlencoded', # Specific content type
+        'Sec-Fetch-Dest': 'empty', # Specific fetch metadata
+        'Sec-Fetch-Mode': 'cors', # Specific fetch metadata
+        'Sec-Fetch-Site': 'same-origin', # Specific fetch metadata
+        'Priority': 'u=1, i', # Specific priority
+    }
+
+# --- Helper functions for login flow ---
+
+# --- Main Login Attempt Function (Refactored) ---
+
+def _perform_login_post(session, saml2_response, email, password):
+    """
+    Extracts config, simulates intermediate API calls, constructs the login POST URL,
+    and submits the credentials using helper functions.
+    """
+    logging.info(f"--- Step 3: Attempting Microsoft Login ---")
+    if not saml2_response:
+        logging.error("Cannot attempt login without a valid login page response.")
+        return None
+
+    saml2_url = saml2_response.url
+    saml2_html = saml2_response.text
+    # Record page load end time for i19 calculation
+    # This is a simplified way to get a timestamp. For true 'loadEventEnd',
+    # a browser environment or more sophisticated timing would be needed.
+    # We use the time when we received the HTML content as a proxy.
+    page_load_end_time_ms = int(time.time() * 1000)
+    logging.info(f"Login page HTML received, marked page_load_end_time_ms: {page_load_end_time_ms}")
+
+    _save_login_page_html(saml2_html)
+
+    # Step 3.1: Extract Initial Tokens from Login Page HTML
+    initial_config = _extract_initial_config(saml2_html)
+    if not initial_config:
+        return None # Error logged in helper
+
+    # Step 3.5: Submit the Final Login Request
+    login_response = _submit_login_request(
+        session, saml2_url, initial_config, email, password, page_load_end_time_ms
+    )
+
+    return _handle_login_response(session, login_response, page_load_end_time_ms)
+
+def _handle_login_response(session, login_response, page_load_end_time_ms):
+    """
+    Handles the response from the login POST request, checking status codes
+    and delegating to appropriate handlers.
+    """
+    logging.info(f"--- Checking Login Response (Status: {login_response.status_code}) ---")
+    try:
+        if login_response.status_code == 200:
+            return _handle_login_success(session, login_response, page_load_end_time_ms)
+        elif login_response.status_code in (302, 303, 307, 308):
+            logging.info(f"Login POST resulted in redirect ({login_response.status_code}). Processing redirect.")
+            return _process_login_response(session, login_response)
+        else:
+            logging.error(f"Login POST failed with status code: {login_response.status_code}")
+            log_response_headers(login_response, "Failed Login POST Response Headers")
+            save_content_to_file(login_response.text, f"{DEBUG_FILE_PREFIX}failed_login_response_{login_response.status_code}.html")
+            logging.error(f"Saved failed login response HTML to {DEBUG_FILE_PREFIX}failed_login_response_{login_response.status_code}.html for inspection.")
+            return None # Indicate failure
+    except requests.exceptions.RequestException as e:
+        logging.error(f"Network error during login response handling: {e}")
+        if hasattr(e, 'response') and e.response is not None:
+            save_content_to_file(e.response.text, f"{DEBUG_FILE_PREFIX}login_response_network_error.html")
+        return None
+    except Exception as e:
+        logging.exception(f"An unexpected error occurred during login response handling: {e}")
+        return None
+
+
+def _handle_login_success(session, login_response, page_load_end_time_ms):
+    """Handles a 200 OK response from the login POST."""
+    logging.info("Login POST returned 200 OK. Checking for SAMLResponse or errors.")
+    login_url = login_response.url
+    login_config = _extract_initial_config(login_response.text) # Changed to _extract_initial_config
+
+    sErrorCode = None
+    if login_config:
+        sErrorCode = login_config.get('sErrorCode')
+        logging.debug(f"Extracted sErrorCode: {sErrorCode}")
+
+    # If no sErrorCode is present, assume success or a state requiring KMSI
+    if sErrorCode is None:
+        logging.info("No sErrorCode found in 200 OK response. Proceeding to KMSI POST.")
+        # Proceed to KMSI POST to potentially get SAMLResponse
+        saml_response = _perform_kmsi_post(session, login_url, login_config, page_load_end_time_ms)
+
+        # If SAMLResponse was extracted, return it. Otherwise, return the login response.
+        if saml_response:
+            logging.info("SAMLResponse extracted after KMSI POST.")
+            # For now, returning the value as requested by the overall task.
+            return saml_response
+        else:
+            logging.warning("KMSI POST did not yield a SAMLResponse. Returning login response for further inspection.")
+            return login_response # Return the response if SAMLResponse wasn't found
+
+    # If sErrorCode is present, check for specific error codes
+    elif sErrorCode == '50126':
+        logging.error(f"Login failed: Invalid username or password (Error Code: {sErrorCode}).")
+        # Optionally, log more details from response_config.get('arrValErrs') if needed
+        # e.g., logging.error(f"Error details: {response_config.get('arrValErrs')}")
+        save_content_to_file(login_response.text, f"{DEBUG_FILE_PREFIX}login_failed_50126.html")
+        return None
+    # Add other specific error code checks here if needed
+    # elif sErrorCode == 'SOME_OTHER_CODE': ...
+
+    # If sErrorCode is present but not a known error, or if $Config parsing failed,
+    # it might be a state requiring further interaction or an unhandled error.
+    # For now, we'll log and return None.
+    logging.error(f"Unhandled sErrorCode '{sErrorCode}' or configuration extraction issue after 200 OK login POST.")
+    save_content_to_file(login_response.text, f"{DEBUG_FILE_PREFIX}unhandled_login_200_response.html")
+    return None
+
+def _perform_kmsi_post(session, login_url, config, page_load_end_time_ms):
+    """
+    Performs the "Keep Me Signed In" (KMSI) POST request and attempts to extract SAMLResponse.
+    """
+    logging.info("--- Step 3.2: Performing KMSI POST (if applicable) ---")
+    kmsi_url = f"https://{MICROSOFT_LOGIN_DOMAIN}/kmsi" # This URL might need to be dynamic or extracted
+    kmsi_payload = _build_kmsi_payload(config, page_load_end_time_ms)
+    kmsi_headers = _build_kmsi_headers(login_url)
+
+    log_request_headers(kmsi_headers, "KMSI Request Headers", session)
+    logging.debug(f"KMSI POST URL: {kmsi_url}")
+    logging.debug(f"KMSI POST Payload: {kmsi_payload}")
+
+    try:
+        kmsi_response = session.post(
+            kmsi_url,
+            data=kmsi_payload,
+            headers=kmsi_headers,
+            allow_redirects=True,
+            timeout=DEFAULT_REQUEST_TIMEOUT
+        )
+        log_response_headers(kmsi_response, "KMSI POST Response Headers")
+        save_content_to_file(kmsi_response.text, f"{DEBUG_FILE_PREFIX}kmsi_response_{kmsi_response.status_code}.html")
+
+        if kmsi_response.status_code == 200:
+            logging.info("KMSI POST returned 200 OK. Checking for SAMLResponse.")
+            return _extract_saml_response(kmsi_response.text)
+        elif kmsi_response.status_code in (302, 303, 307, 308):
+            logging.info(f"KMSI POST resulted in redirect ({kmsi_response.status_code}). Processing redirect.")
+            return _process_login_response(session, kmsi_response) # Reuse redirect handler
+        else:
+            logging.error(f"KMSI POST failed with status code: {kmsi_response.status_code}")
+            return None
+    except requests.exceptions.RequestException as e:
+        logging.error(f"Network error during KMSI POST: {e}")
+        if hasattr(e, 'response') and e.response is not None:
+            save_content_to_file(e.response.text, f"{DEBUG_FILE_PREFIX}kmsi_network_error_response.html")
+        return None
+    except Exception as e:
+        logging.exception(f"An unexpected error occurred during KMSI POST: {e}")
+        return None
+
+def _extract_saml_response(html_content):
+    """
+    Extracts the SAMLResponse value from HTML using regex.
+    Assumes the SAMLResponse is in a hidden input field.
+    """
+    logging.info("Attempting to extract SAMLResponse from HTML.")
+    saml_response_match = re.search(r'<input type="hidden" name="SAMLResponse" value="([^"]+)"', html_content)
+    if saml_response_match:
+        saml_response_value = html.unescape(saml_response_match.group(1))
+        logging.info("SAMLResponse successfully extracted.")
+        # logging.debug(f"Extracted SAMLResponse: {saml_response_value[:50]}...") # Log snippet
+        return saml_response_value
+    else:
+        logging.warning("SAMLResponse hidden input field not found in HTML.")
+        return None
+
+def _submit_login_request(session, saml2_url, config, email, password, page_load_end_time_ms):
+    """
+    Submits the final login POST request to Microsoft.
+    """
+    logging.info("--- Step 3.1: Submitting Final Login Request ---")
+    tenantId = config['sTenantId']
+    login_url = f"https://{MICROSOFT_LOGIN_DOMAIN}/{tenantId}/login" # This URL might need to be dynamic or extracted
+    login_payload = _build_login_payload(email, password, config, page_load_end_time_ms)
+    login_headers = _build_login_headers(saml2_url)
+
+    log_request_headers(login_headers, "Login POST Request Headers", session)
+    logging.debug(f"Login POST URL: {login_url}")
+    logging.debug(f"Login POST Payload (password redacted): {{k: v for k, v in login_payload.items() if k != 'passwd'}}")
+
+    return session.post(
+        login_url,
+        data=login_payload,
+        headers=login_headers,
+        allow_redirects=False, # We want to handle redirects manually for SAML flow
+        timeout=DEFAULT_REQUEST_TIMEOUT
+    )
+
+def _save_login_page_html(html_content):
+    """Saves the initial login page HTML for debugging."""
+    save_content_to_file(html_content, f"{DEBUG_FILE_PREFIX}login_page_initial.html")
+    logging.info(f"Saved initial login page HTML to {DEBUG_FILE_PREFIX}login_page_initial.html")
+
+def _process_login_response(session, response):
+    """
+    Processes a login response, handling redirects and looking for SAMLResponse.
+    This function will recursively follow redirects up to MAX_REDIRECTS.
+    """
+    redirect_count = 0
+    current_response = response
+
+    while current_response.status_code in (302, 303, 307, 308) and redirect_count < MAX_REDIRECTS:
+        location = current_response.headers.get('Location')
+        if not location:
+            logging.error("Redirect response missing 'Location' header.")
+            return None
+
+        logging.info(f"Redirecting ({current_response.status_code}) to: {location}")
+        log_response_headers(current_response, f"Redirect Response Headers (Count: {redirect_count + 1})")
+        save_content_to_file(current_response.text, f"{DEBUG_FILE_PREFIX}redirect_response_{redirect_count + 1}.html")
+
+        # Check for SAMLResponse in the redirect URL itself (HTTP-Redirect binding)
+        parsed_location = urllib.parse.urlparse(location)
+        query_params = urllib.parse.parse_qs(parsed_location.query)
+        if 'SAMLResponse' in query_params:
+            saml_response_value = html.unescape(query_params['SAMLResponse'][0])
+            logging.info("SAMLResponse found in redirect URL (HTTP-Redirect binding).")
+            return saml_response_value
+
+        # If not in URL, follow the redirect
+        try:
+            # Use GET for 302/303, preserve method for 307/308
+            method = 'GET' if current_response.status_code in (302, 303) else current_response.request.method
+            current_response = session.request(method, location, allow_redirects=False, timeout=DEFAULT_REQUEST_TIMEOUT)
+            redirect_count += 1
+        except requests.exceptions.RequestException as e:
+            logging.error(f"Network error during redirect to {location}: {e}")
+            if hasattr(e, 'response') and e.response is not None:
+                save_content_to_file(e.response.text, f"{DEBUG_FILE_PREFIX}redirect_network_error_response.html")
+            return None
+        except Exception as e:
+            logging.exception(f"An unexpected error occurred during redirect processing: {e}")
+            return None
+
+    if redirect_count >= MAX_REDIRECTS:
+        logging.error(f"Exceeded maximum redirects ({MAX_REDIRECTS}). Aborting.")
+        return None
+
+    # After redirects, check the final response for SAMLResponse in HTML (HTTP-POST binding)
+    if current_response.status_code == 200:
+        logging.info("Final response after redirects is 200 OK. Checking for SAMLResponse in HTML.")
+        saml_response_value = _extract_saml_response(current_response.text)
+        if saml_response_value:
+            return saml_response_value
+        else:
+            logging.warning("No SAMLResponse found in final 200 OK response HTML after redirects.")
+            save_content_to_file(current_response.text, f"{DEBUG_FILE_PREFIX}final_response_no_saml.html")
+            return current_response # Return the response if SAMLResponse wasn't found
+    else:
+        logging.error(f"Final response after redirects was not 200 OK: {current_response.status_code}")
+        log_response_headers(current_response, "Final Response Headers After Redirects")
+        save_content_to_file(current_response.text, f"{DEBUG_FILE_PREFIX}final_response_error_{current_response.status_code}.html")
+        return None
+
+def _initial_report_get(session, report_url):
+    """Performs the initial GET request to the report URL to trigger authentication."""
+    logging.info(f"--- Step 1: Initial GET to Report URL: {report_url} ---")
+    try:
+        initial_response = session.get(report_url, allow_redirects=False, timeout=DEFAULT_REQUEST_TIMEOUT)
+        log_response_headers(initial_response, "Initial Report URL Response Headers")
+        save_content_to_file(initial_response.text, f"{DEBUG_FILE_PREFIX}initial_report_response_{initial_response.status_code}.html")
+        return initial_response
+    except requests.exceptions.RequestException as e:
+        logging.error(f"Network error during initial report GET: {e}")
+        if hasattr(e, 'response') and e.response is not None:
+            save_content_to_file(e.response.text, f"{DEBUG_FILE_PREFIX}initial_report_network_error.html")
+        return None
+    except Exception as e:
+        logging.exception(f"An unexpected error occurred during initial report GET: {e}")
+        return None
+
+def _get_saml2_login_page(session, config):
+    """Constructs and performs GET request to the SAML2 login URL."""
+    logging.info(f"--- Step 2: Getting SAML2 Login Page ---")
+    saml2_url = _generate_saml2_url(config)
+    if not saml2_url:
+        logging.error("Failed to generate SAML2 URL.")
+        return None
+
+    try:
+        logging.info(f"--- Step 2a: GETting constructed SAML2 URL: {saml2_url} ---")
+        saml2_response = session.get(saml2_url, allow_redirects=False, timeout=DEFAULT_REQUEST_TIMEOUT)
+        log_response_headers(saml2_response, "SAML2 URL Response Headers")
+        save_content_to_file(saml2_response.text, f"{DEBUG_FILE_PREFIX}saml2_response_{saml2_response.status_code}.html")
+        return saml2_response
+    except requests.exceptions.RequestException as e:
+        logging.error(f"Network error during SAML2 login page GET: {e}")
+        if hasattr(e, 'response') and e.response is not None:
+            save_content_to_file(e.response.text, f"{DEBUG_FILE_PREFIX}saml2_network_error.html")
+        return None
+    except Exception as e:
+        logging.exception(f"An unexpected error occurred during SAML2 login page GET: {e}")
+        return None
+
+def _post_saml_assertion(session, saml_response_value, saml_acs_url):
+    """
+    Posts the SAML assertion to the Assertion Consumer Service (ACS) URL.
+    """
+    logging.info("--- Step 4: Posting SAML Assertion to ACS URL ---")
+    if not saml_response_value or not saml_acs_url:
+        logging.error("Missing SAMLResponse value or ACS URL for posting assertion.")
+        return None
+
+    payload = {
+        'SAMLResponse': saml_response_value
+    }
+    headers = {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
+        'User-Agent': session.headers.get('User-Agent'), # Use session's User-Agent
+        'Origin': urllib.parse.urlparse(saml_acs_url).scheme + "://" + urllib.parse.urlparse(saml_acs_url).netloc,
+        'Referer': saml_acs_url # Referer should be the ACS URL itself for this POST
+    }
+
+    log_request_headers(headers, "SAML Assertion POST Request Headers", session)
+    logging.debug(f"SAML Assertion POST URL: {saml_acs_url}")
+    logging.debug(f"SAML Assertion POST Payload (SAMLResponse snippet): {saml_response_value[:50]}...")
+
+    try:
+        # The SAML ACS POST typically results in a redirect to the target application
+        acs_response = session.post(
+            saml_acs_url,
+            data=payload,
+            headers=headers,
+            allow_redirects=True, # Allow requests to handle the final redirect to the report URL
+            timeout=DEFAULT_REQUEST_TIMEOUT
+        )
+        log_response_headers(acs_response, "SAML Assertion POST Response Headers")
+        save_content_to_file(acs_response.text, f"{DEBUG_FILE_PREFIX}acs_response_{acs_response.status_code}.html")
+
+        if acs_response.status_code == 200:
+            logging.info("SAML Assertion POST returned 200 OK. This might be the final report page or another intermediate step.")
+            return acs_response
+        elif acs_response.status_code in (302, 303, 307, 308):
+            logging.info(f"SAML Assertion POST resulted in redirect ({acs_response.status_code}). Session should have followed.")
+            # If allow_redirects=True, the session will have already followed.
+            # The final response in acs_response will be the end of the redirect chain.
+            return acs_response
+        else:
+            logging.error(f"SAML Assertion POST failed with status code: {acs_response.status_code}")
+            return None
+    except requests.exceptions.RequestException as e:
+        logging.error(f"Network error during SAML Assertion POST: {e}")
+        if hasattr(e, 'response') and e.response is not None:
+            save_content_to_file(e.response.text, f"{DEBUG_FILE_PREFIX}acs_network_error_response.html")
+        return None
+    except Exception as e:
+        logging.exception(f"An unexpected error occurred during SAML Assertion POST: {e}")
+        return None
+
+def perform_saml_authentication(session, config):
+    """Handles the full SAML authentication flow."""
+    logging.info("--- Starting SAML Authentication Flow ---")
+    try:
+        initial_response = _initial_report_get(session, config['report_url'])
+        if not initial_response:
+            return None
+
+        if initial_response.status_code == 302:
+            redirect_url = initial_response.headers.get('Location')
+            if not redirect_url:
+                logging.error("Initial redirect missing Location header.")
+                return None
+            logging.info(f"Initial GET redirected to: {redirect_url}")
+
+            saml2_response = _get_saml2_login_page(session, config)
+            if not saml2_response:
+                return None
+
+            if saml2_response.status_code == 200:
+                logging.info("Successfully retrieved SAML2 login page.")
+                saml_response_value = _perform_login_post(
+                    session, saml2_response, config['user_email'], config['user_password']
+                )
+
+                if saml_response_value:
+                    if isinstance(saml_response_value, str):
+                        logging.info("Authentication successful, SAMLResponse obtained.")
+                        # Step 4: Post SAML Assertion
+                        final_response = _post_saml_assertion(
+                            session, saml_response_value, config['saml_acs_url']
+                        )
+                        return final_response
+                    elif isinstance(saml_response_value, requests.Response):
+                        logging.info("Authentication flow completed, received a final HTTP response.")
+                        return saml_response_value
+                else:
+                    logging.error("Authentication failed or did not yield a SAMLResponse/final response.")
+                    return None
+            else:
+                logging.error(f"Failed to retrieve SAML2 login page. Status: {saml2_response.status_code}")
+                return None
+        else:
+            logging.error(f"Initial GET to report URL did not result in a 302 redirect. Status: {initial_response.status_code}")
+            return None
+
+    except requests.exceptions.RequestException as e:
+        logging.error(f"Network error during authentication flow: {e}")
+        if hasattr(e, 'response') and e.response is not None:
+            save_content_to_file(e.response.text, f"{DEBUG_FILE_PREFIX}auth_network_error_response.html")
+        return None
+    except Exception as e:
+        logging.exception(f"An unexpected error occurred during authentication flow: {e}")
+        return None
+
+def _save_report_based_on_content(response, base_filename="report_output"):
+    """
+    Saves the report content to a file, attempting to determine the correct extension.
+    """
+    content_type = response.headers.get('Content-Type', '').lower()
+    filename = base_filename
+    is_binary = False
+    content_to_save = response.text # Default to text content
+
+    for mime_type, (ext, binary_mode) in CONTENT_TYPE_MAPPINGS.items():
+        if mime_type in content_type:
+            filename += ext
+            is_binary = binary_mode
+            if mime_type == 'application/json' and not binary_mode:
+                try:
+                    content_to_save = json.dumps(response.json(), indent=4)
+                except json.JSONDecodeError:
+                    logging.warning("Response Content-Type is JSON but content is not valid JSON. Saving as raw text.")
+            break
+    else: # If no specific mapping found
+        if 'text/' in content_type:
+            filename += ".txt"
+        else:
+            filename += ".bin"
+            is_binary = True
+            logging.warning(f"Unknown content type '{content_type}'. Saving as binary file.")
+    
+    if is_binary:
+        content_to_save = response.content
+    save_content_to_file(content_to_save, filename, is_binary)
+    return filename
+
+def fetch_final_report(session, report_url, report_payload):
+    """Uses the authenticated session to fetch the final report."""
+    logging.info(f"--- Step 5: Fetching Final Report from: {report_url} ---")
+    headers = {
+        'Content-Type': 'application/json', # Assuming JSON payload for report
+        'Accept': 'application/json, text/plain, */*',
+        'User-Agent': session.headers.get('User-Agent'),
+        'Referer': report_url, # Referer should be the report URL itself
+        'X-Requested-With': 'XMLHttpRequest' # Often needed for API calls
+    }
+
+    log_request_headers(headers, "Final Report POST Request Headers", session)
+    logging.debug(f"Report POST URL: {report_url}")
+    logging.debug(f"Report POST Payload: {report_payload}")
+
+    try:
+        report_response = session.post(
+            report_url,
+            data=report_payload,
+            headers=headers,
+            timeout=60 # Increased timeout for potentially large reports
+        )
+        log_response_headers(report_response, "Final Report Response Headers")
+        _save_report_based_on_content(report_response)
+
+        if report_response.status_code == 200:
+            logging.info("Successfully fetched final report.")
+            return report_response
+        else:
+            logging.error(f"Failed to fetch final report. Status code: {report_response.status_code}")
+            return None
+    except requests.exceptions.RequestException as e:
+        logging.error(f"Network error fetching final report: {e}")
+        if hasattr(e, 'response') and e.response is not None:
+            save_content_to_file(e.response.text, f"{DEBUG_FILE_PREFIX}report_network_error_response.html")
+        return None
+    except Exception as e:
+        logging.exception(f"An unexpected error occurred while fetching the final report: {e}")
+        return None
+
+def download_snow_report(config):
+    """Orchestrates the entire workflow: authentication and report fetching."""
+    logging.info("--- Starting SNOW Report Workflow ---")
+    session = setup_session(config)
+    authenticated_response = perform_saml_authentication(session, config)
+
+    if authenticated_response:
+        logging.info("Authentication successful. Attempting to fetch report.")
+        # The authenticated_response might be the final report page itself,
+        # or it might be a redirect to the report URL.
+        # We need to decide if we need to make another request or if we already have the report.
+        # For now, assuming we need to make a separate POST request for the report.
+        final_report_response = fetch_final_report(
+            session, config['report_url'], config['report_request_payload']
+        )
+        if final_report_response:
+            logging.info("Report workflow completed successfully.")
+            return True
+        else:
+            logging.error("Failed to fetch final report.")
+            return False
+    else:
+        logging.error("Authentication failed. Aborting report workflow.")
+        return False
+
+def main():
+    """Main entry point for the script."""
+    logging.info("Application started.")
+    try:
+        config = get_config()
+        if config:
+            if download_snow_report(config):
+                logging.info("SNOW report generation workflow finished successfully.")
+            else:
+                logging.error("SNOW report generation workflow failed.")
+        else:
+            logging.error("Configuration could not be loaded. Exiting.")
+            sys.exit(1)
+    except Exception as e:
+        logging.exception(f"An unhandled error occurred in main: {e}")
+        sys.exit(1)
+
+if __name__ == "__main__":
+    main()
