@@ -6,7 +6,23 @@ This Jenkins Groovy pipeline script processes the `extracted_table.csv` file to 
 
 ## Pipeline Stages
 
-### Stage 1: Generate HTML Tables
+### Stage 1: Generate CHM PR HTML Table
+- **Purpose**: Generate an HTML table from the CHM PR CSV file
+- **Input**: `chm-pr.csv` file in the workspace root
+- **Processing**:
+  1. Reads and validates the CHM PR CSV file
+  2. Converts the entire CSV content directly to an HTML table format
+  3. Displays all rows and columns from the CSV as-is (no filtering or processing)
+  4. Applies professional styling with borders, padding, and hover effects
+  5. Handles missing files gracefully without failing the pipeline
+- **Output**:
+  - `chm-pr-report.html` file with the complete CSV data in table format
+  - Archived artifact in Jenkins
+- **Error Handling**:
+  - Continues pipeline execution if CSV file is missing or malformed
+  - Logs warnings for missing or empty files
+
+### Stage 2: Generate HTML Tables
 - **Purpose**: Categorize tickets based on breach time and generate HTML tables
 - **Input**: `extracted_table.csv` file at `d:\code\quickwin\extracted_table.csv`
 - **Processing**:
@@ -17,19 +33,20 @@ This Jenkins Groovy pipeline script processes the `extracted_table.csv` file to 
      - **On Track Due in Next 10 Days**: Breach time is between now and 10 days from now
      - **On Track Due in Next 30 Days**: Breach time is between 10 days and 30 days from now
   4. Generates styled HTML tables for each category
-- **Output**: 
+- **Output**:
   - `ticket_report.html` file with categorized tables
   - Archived artifact in Jenkins
 
-### Stage 2: Extract Owner Emails
+### Stage 3: Extract Owner Emails
 - **Purpose**: Extract unique email addresses from the CSV
 - **Processing**:
   1. Reads the same CSV file
-  2. Extracts all email addresses from the "Email" column
-  3. Removes duplicates and creates a comma-separated list
-- **Output**: 
-  - `EMAIL` environment variable containing comma-separated unique emails
-  - `extracted_emails.txt` file with the email list
+  2. Extracts all email addresses from both the "Email" and "assignee_email" columns
+  3. Combines emails from both columns and removes duplicates to create a comma-separated list
+  4. Maintains backward compatibility - works with either column or both columns present
+- **Output**:
+  - `EMAIL` environment variable containing comma-separated unique emails from both columns
+  - `extracted_emails.txt` file with the deduplicated email list
   - Archived artifact in Jenkins
 
 ## CSV File Requirements
@@ -37,11 +54,14 @@ This Jenkins Groovy pipeline script processes the `extracted_table.csv` file to 
 ### Required Columns
 The CSV file must contain the following columns:
 - `Owner`: Name of the ticket owner
-- `Email`: Email address of the owner
+- `Email`: Email address of the owner (optional if assignee_email is present)
+- `assignee_email`: Email address of the assignee (optional if Email is present)
 - `Task`: Task identifier or description
 - `Actions`: Action or assignment group information
 - `Level 6`: Level or priority information
 - `Breach time`: Date/time when the ticket breaches SLA
+
+**Note**: At least one of `Email` or `assignee_email` columns must be present. The system will extract and combine unique emails from both columns if both are available.
 
 ### Data Format Requirements
 - **File Location**: `d:\code\quickwin\extracted_table.csv`

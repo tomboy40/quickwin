@@ -1,0 +1,8 @@
+PR Number,Title,Author,Status,Created Date,Merged Date,Repository,Branch
+PR-001,Fix authentication bug,John Doe,Merged,2025-01-15,2025-01-16,auth-service,feature/fix-auth
+PR-002,Add new user dashboard,Jane Smith,Open,2025-01-17,,frontend-app,feature/user-dashboard
+PR-003,Update database schema,Bob Wilson,Merged,2025-01-14,2025-01-15,backend-api,feature/db-update
+PR-004,Implement caching layer,Alice Brown,In Review,2025-01-18,,backend-api,feature/caching
+PR-005,Fix responsive design,Mike Davis,Merged,2025-01-16,2025-01-17,frontend-app,bugfix/responsive
+PR-006,Add unit tests,Sarah Connor,Open,2025-01-19,,auth-service,feature/unit-tests
+PR-007,Security vulnerability fix,Tom Anderson,Merged,2025-01-13,2025-01-14,backend-api,security/fix-vuln

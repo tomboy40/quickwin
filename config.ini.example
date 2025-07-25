@@ -1,4 +1,5 @@
 # Copy this to config.ini and fill in your actual values
+# NOTE: Environment variables (.env file) take precedence over config.ini values
 
 [proxy]
 # Proxy Configuration
@@ -6,25 +7,23 @@ host = proxy.example.com
 user = your_proxy_username
 pass = your_proxy_password
 
-[api]
-# API Configuration
-report_url = https://api.example.com/report
-
 [snow]
 # ServiceNow Configuration
-proxy_user = your_proxy_username
-proxy_pass = your_proxy_password
-proxy_host = proxy.example.com
 user_email = your_email@example.com
 user_password = your_password
 homepage_url = https://your-instance.service-now.com
 saml_acs_url = https://your-instance.service-now.com/navpage.do
-report_url = https://your-instance.service-now.com/api/now/table/incident
-report_request_payload = {"short_description": "Test incident"}
 referer = https://your-instance.service-now.com
-x_user_token = your_user_token
+
+# Legacy single report configuration (used as fallback for Report 1)
+report_url = https://your-instance.service-now.com/api/now/table/incident
+report_payload = {"short_description": "Test incident"}
 
 [ssl]
 # SSL Configuration
 disable_warnings = true
 verify = false
+
+# IMPORTANT: For multi-report configuration, use the .env file instead
+# The .env file supports configuring 2 separate reports with different URLs, payloads, and output files
+# See .env file for SNOW_REPORT1_* and SNOW_REPORT2_* configuration options

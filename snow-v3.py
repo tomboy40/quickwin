@@ -87,6 +87,24 @@ FORM_ENCODED_CONTENT_TYPE = 'application/x-www-form-urlencoded'
 JSON_CONTENT_TYPE = 'application/x-www-form-urlencoded; charset=UTF-8'
 XML_HTTP_REQUEST = 'XMLHttpRequest'
 
+# Table Parsing Constants
+DEFAULT_TARGET_TABLE = 1
+MAX_DEBUG_ROWS = 3
+DEFAULT_ASSIGNMENT_GROUP_COLUMN = 3
+MINIMUM_GROUP_NAME_LENGTH = 2
+DEFAULT_CSV_FILENAME = "extracted_table.csv"
+DEFAULT_CONTACT_FILENAME = "assignment_group_contact.csv"
+DEFAULT_JSON_FILENAME = "report_output.json"
+MAX_LOG_DATA_LENGTH = 50
+
+# Column Names
+OWNER_COLUMN = "Owner"
+EMAIL_COLUMN = "Email"
+NOT_FOUND_VALUE = "Not Found"
+
+# Required Contact Mapping Columns
+REQUIRED_CONTACT_COLUMNS = ['AssignmentGroup', 'Contact', 'Email']
+
 # --- Logging Configuration ---
 logging.basicConfig(
     level=logging.DEBUG,
@@ -231,24 +249,46 @@ def extract_saml_response(html_content):
 # --- HTML Table Parsing Classes ---
 
 class TableParser(HTMLParser):
-    """Custom HTML parser to extract table data using Python's standard library with enhanced nested element support."""
+    """Custom HTML parser to extract table data using Python's standard library with enhanced nested element support.
+    
+    This parser extracts the first meaningful table from HTML content, with support for:
+    - Nested element content extraction (prioritizes first meaningful nested element)
+    - Malformed HTML handling
+    - Header and data row separation
+    - Entity and character reference handling
+    """
 
-    def __init__(self):
+    def __init__(self, target_table=DEFAULT_TARGET_TABLE):
+        """Initialize the table parser.
+        
+        Args:
+            target_table (int): Which table to extract (1-based index)
+        """
         super().__init__()
+        self._init_parsing_state()
+        self._init_table_data()
+        self._init_nested_tracking()
+        self.target_table = target_table
+
+    def _init_parsing_state(self):
+        """Initialize HTML parsing state flags."""
         self.in_table = False
         self.in_thead = False
         self.in_tbody = False
         self.in_tr = False
         self.in_th = False
         self.in_td = False
+
+    def _init_table_data(self):
+        """Initialize table data storage."""
         self.current_row = []
         self.current_cell = ""
         self.headers = []
         self.rows = []
         self.table_count = 0
-        self.target_table = 1  # Extract the first meaningful table
 
-        # Enhanced nested element tracking
+    def _init_nested_tracking(self):
+        """Initialize nested element tracking for enhanced content extraction."""
         self.nested_element_stack = []  # Stack to track nested elements within cells
         self.nested_content = ""  # Content from nested elements
         self.first_nested_content = ""  # Content from the first meaningful nested element
@@ -256,38 +296,84 @@ class TableParser(HTMLParser):
         self.meaningful_tags = {'div', 'span', 'a', 'p', 'strong', 'em', 'b', 'i'}  # Tags that contain meaningful content
 
     def handle_starttag(self, tag, attrs):
-        """Handle opening HTML tags with enhanced nested element support."""
+        """Handle opening HTML tags with enhanced nested element support.
+        
+        Args:
+            tag (str): HTML tag name
+            attrs (list): List of (name, value) attribute pairs
+        """
         if tag == 'table':
-            self.table_count += 1
-            # Look for the first table that has meaningful content
-            if self.table_count == self.target_table:
-                self.in_table = True
-                logging.debug(f"Found table start tag (table #{self.table_count})")
-        elif tag == 'thead' and self.in_table:
+            self._handle_table_start()
+        elif self.in_table:
+            self._handle_table_content_start(tag)
+        elif self._is_in_cell() and tag in self.meaningful_tags:
+            self._handle_nested_element_start(tag)
+
+    def _handle_table_start(self):
+        """Handle the start of a table tag."""
+        self.table_count += 1
+        # Look for the first table that has meaningful content
+        if self.table_count == self.target_table:
+            self.in_table = True
+            logging.debug(f"Found table start tag (table #{self.table_count})")
+
+    def _handle_table_content_start(self, tag):
+        """Handle table content tags (thead, tbody, tr, th, td).
+        
+        Args:
+            tag (str): HTML tag name
+        """
+        if tag == 'thead':
             self.in_thead = True
             logging.debug("Found thead start tag")
-        elif tag == 'tbody' and self.in_table:
+        elif tag == 'tbody':
             self.in_tbody = True
             logging.debug("Found tbody start tag")
-        elif tag == 'tr' and self.in_table:
-            self.in_tr = True
-            self.current_row = []
-            logging.debug("Found tr start tag")
+        elif tag == 'tr':
+            self._handle_row_start()
         elif tag == 'th' and self.in_tr:
-            self.in_th = True
-            self._reset_cell_state()
-            logging.debug("Found th start tag")
+            self._handle_header_cell_start()
         elif tag == 'td' and self.in_tr:
-            self.in_td = True
-            self._reset_cell_state()
-            logging.debug("Found td start tag")
-        elif (self.in_th or self.in_td) and tag in self.meaningful_tags:
-            # Track nested meaningful elements within table cells
-            self.nested_element_stack.append(tag)
-            if not self.has_nested_content:
-                # This is the first meaningful nested element, start capturing its content
-                self.nested_content = ""
-                logging.debug(f"Started capturing content from first nested {tag} element")
+            self._handle_data_cell_start()
+
+    def _handle_row_start(self):
+        """Handle the start of a table row."""
+        self.in_tr = True
+        self.current_row = []
+        logging.debug("Found tr start tag")
+
+    def _handle_header_cell_start(self):
+        """Handle the start of a header cell."""
+        self.in_th = True
+        self._reset_cell_state()
+        logging.debug("Found th start tag")
+
+    def _handle_data_cell_start(self):
+        """Handle the start of a data cell."""
+        self.in_td = True
+        self._reset_cell_state()
+        logging.debug("Found td start tag")
+
+    def _handle_nested_element_start(self, tag):
+        """Handle the start of a nested meaningful element within a cell.
+        
+        Args:
+            tag (str): HTML tag name
+        """
+        # Track nested meaningful elements within table cells
+        self.nested_element_stack.append(tag)
+        if not self.has_nested_content:
+            # This is the first meaningful nested element, start capturing its content
+            self.nested_content = ""
+            logging.debug(f"Started capturing content from first nested {tag} element")
+
+    def _is_in_cell(self):
+        """Check if currently inside a table cell.
+        
+        Returns:
+            bool: True if inside th or td element
+        """
+        return self.in_th or self.in_td
 
     def _reset_cell_state(self):
         """Reset cell-specific state variables."""
@@ -298,103 +384,220 @@ class TableParser(HTMLParser):
         self.has_nested_content = False
 
     def handle_endtag(self, tag):
-        """Handle closing HTML tags with enhanced nested element support."""
+        """Handle closing HTML tags with enhanced nested element support.
+        
+        Args:
+            tag (str): HTML tag name
+        """
         if tag == 'table' and self.in_table:
-            # Check if we have meaningful data before closing
-            if self.headers or self.rows:
-                logging.debug(f"Found table end tag with data - headers: {len(self.headers)}, rows: {len(self.rows)}")
-                self.in_table = False
-            else:
-                # This table was empty, try the next one
-                logging.debug(f"Table #{self.table_count} was empty, looking for next table")
-                self.target_table += 1
-                self.in_table = False
-        elif tag == 'thead' and self.in_thead:
+            self._handle_table_end()
+        elif self.in_table:
+            self._handle_table_content_end(tag)
+        elif self._is_in_cell() and tag in self.meaningful_tags:
+            self._handle_nested_element_end(tag)
+
+    def _handle_table_end(self):
+        """Handle the end of a table tag."""
+        # Check if we have meaningful data before closing
+        if self.headers or self.rows:
+            logging.debug(f"Found table end tag with data - headers: {len(self.headers)}, rows: {len(self.rows)}")
+            self.in_table = False
+        else:
+            # This table was empty, try the next one
+            logging.debug(f"Table #{self.table_count} was empty, looking for next table")
+            self.target_table += 1
+            self.in_table = False
+
+    def _handle_table_content_end(self, tag):
+        """Handle end tags for table content elements.
+        
+        Args:
+            tag (str): HTML tag name
+        """
+        if tag == 'thead' and self.in_thead:
             self.in_thead = False
             logging.debug("Found thead end tag")
         elif tag == 'tbody' and self.in_tbody:
             self.in_tbody = False
             logging.debug("Found tbody end tag")
         elif tag == 'tr' and self.in_tr:
-            self.in_tr = False
-            if self.current_row:
-                # Check if any cell has meaningful content
-                has_content = any(cell.strip() for cell in self.current_row)
-                if has_content:
-                    if self.in_thead or (not self.headers and not self.in_tbody):
-                        # This is a header row
-                        if not self.headers:  # Only take the first header row
-                            self.headers = self.current_row[:]
-                            logging.debug(f"Added headers: {self.headers}")
-                    else:
-                        # This is a data row
-                        self.rows.append(self.current_row[:])
-                        logging.debug(f"Added row: {self.current_row}")
-            self.current_row = []
+            self._handle_row_end()
         elif tag == 'th' and self.in_th:
-            self.in_th = False
-            cell_content = self._get_final_cell_content()
-            self.current_row.append(cell_content)
-            logging.debug(f"Added th cell content: '{cell_content}'")
+            self._handle_header_cell_end()
         elif tag == 'td' and self.in_td:
-            self.in_td = False
-            cell_content = self._get_final_cell_content()
-            self.current_row.append(cell_content)
-            logging.debug(f"Added td cell content: '{cell_content}'")
-        elif (self.in_th or self.in_td) and tag in self.meaningful_tags:
-            # Handle closing of nested meaningful elements
-            if self.nested_element_stack and self.nested_element_stack[-1] == tag:
-                self.nested_element_stack.pop()
-                if not self.has_nested_content and self.nested_content.strip():
-                    # This was the first meaningful nested element with content
-                    self.first_nested_content = self.nested_content.strip()
-                    self.has_nested_content = True
-                    logging.debug(f"Captured first nested content from {tag}: '{self.first_nested_content}'")
+            self._handle_data_cell_end()
+
+    def _handle_row_end(self):
+        """Handle the end of a table row."""
+        self.in_tr = False
+        if self.current_row and self._row_has_content():
+            if self._is_header_row():
+                self._add_header_row()
+            else:
+                self._add_data_row()
+        self.current_row = []
+
+    def _row_has_content(self):
+        """Check if the current row has meaningful content.
+        
+        Returns:
+            bool: True if any cell has non-empty content
+        """
+        return any(cell.strip() for cell in self.current_row)
+
+    def _is_header_row(self):
+        """Determine if the current row should be treated as a header row.
+        
+        Returns:
+            bool: True if this should be a header row
+        """
+        return self.in_thead or (not self.headers and not self.in_tbody)
+
+    def _add_header_row(self):
+        """Add the current row as headers if no headers exist yet."""
+        if not self.headers:  # Only take the first header row
+            self.headers = self.current_row[:]
+            logging.debug(f"Added headers: {self.headers}")
+
+    def _add_data_row(self):
+        """Add the current row as a data row."""
+        self.rows.append(self.current_row[:])
+        logging.debug(f"Added row: {self.current_row}")
+
+    def _handle_header_cell_end(self):
+        """Handle the end of a header cell."""
+        self.in_th = False
+        cell_content = self._get_final_cell_content()
+        self.current_row.append(cell_content)
+        logging.debug(f"Added th cell content: '{cell_content}'")
+
+    def _handle_data_cell_end(self):
+        """Handle the end of a data cell."""
+        self.in_td = False
+        cell_content = self._get_final_cell_content()
+        self.current_row.append(cell_content)
+        logging.debug(f"Added td cell content: '{cell_content}'")
+
+    def _handle_nested_element_end(self, tag):
+        """Handle the end of a nested meaningful element.
+        
+        Args:
+            tag (str): HTML tag name
+        """
+        # Handle closing of nested meaningful elements
+        if self.nested_element_stack and self.nested_element_stack[-1] == tag:
+            self.nested_element_stack.pop()
+            if not self.has_nested_content and self.nested_content.strip():
+                # This was the first meaningful nested element with content
+                self.first_nested_content = self.nested_content.strip()
+                self.has_nested_content = True
+                logging.debug(f"Captured first nested content from {tag}: '{self.first_nested_content}'")
 
     def _get_final_cell_content(self):
-        """Determine the final content for a table cell, prioritizing nested content."""
+        """Determine the final content for a table cell, prioritizing nested content.
+        
+        Returns:
+            str: The final cell content
+        """
+        content = self._determine_cell_content()
+        self._reset_cell_state()
+        return content
+
+    def _determine_cell_content(self):
+        """Determine which content to use for the cell.
+        
+        Returns:
+            str: The selected cell content
+        """
         # Priority 1: Content from the first meaningful nested element
         if self.has_nested_content and self.first_nested_content:
+            logging.debug(f"Using nested content: '{self.first_nested_content}'")
             return self.first_nested_content
 
         # Priority 2: Fallback to direct cell content
-        return self.current_cell.strip()
+        content = self.current_cell.strip()
+        logging.debug(f"Using direct content: '{content}'")
+        return content
+
+    def _reset_cell_state(self):
+        """Reset all cell-related state variables."""
+        self.current_cell = ""
+        self.nested_content = ""
+        self.first_nested_content = ""
+        self.has_nested_content = False
+        self.nested_element_stack = []
 
     def handle_data(self, data):
-        """Handle text data within HTML tags with enhanced nested element support."""
-        if self.in_th or self.in_td:
-            # Always add to current_cell for fallback
-            self.current_cell += data
+        """Handle text data within HTML tags with enhanced nested element support.
+        
+        Args:
+            data (str): Text data from HTML
+        """
+        if self._is_in_cell():
+            self._handle_cell_data(data)
+        else:
+            self._log_ignored_data(data)
 
-            # If we're inside a nested element and haven't captured content yet, add to nested_content
-            if self.nested_element_stack and not self.has_nested_content:
-                self.nested_content += data
+    def _handle_cell_data(self, data):
+        """Handle text data within table cells.
+        
+        Args:
+            data (str): Text data from HTML
+        """
+        # Always add to current_cell for fallback
+        self.current_cell += data
+
+        # If we're inside a nested element and haven't captured content yet, add to nested_content
+        if self.nested_element_stack and not self.has_nested_content:
+            self.nested_content += data
+            logging.debug(f"Added nested data: '{data}' (total nested: '{self.nested_content}')")
+        else:
+            logging.debug(f"Added direct cell data: '{data}' (total direct: '{self.current_cell}')")
+
+    def _log_ignored_data(self, data):
+        """Log data that is being ignored because it's outside cells.
+        
+        Args:
+            data (str): Text data from HTML
+        """
+        if len(data) > MAX_LOG_DATA_LENGTH:
+            logging.debug(f"Ignoring data outside cells: '{data[:MAX_LOG_DATA_LENGTH]}...'")
+        else:
+            logging.debug(f"Ignoring data outside cells: '{data}'")
 
     def handle_entityref(self, name):
-        """Handle HTML entities like &amp;, &lt;, etc. with enhanced nested element support."""
-        if self.in_th or self.in_td:
+        """Handle HTML entities like &amp;, &lt;, etc. with enhanced nested element support.
+        
+        Args:
+            name (str): Entity name (e.g., 'amp', 'lt')
+        """
+        if self._is_in_cell():
             entity_char = html.unescape(f"&{name};")
-            # Always add to current_cell for fallback
-            self.current_cell += entity_char
-
-            # If we're inside a nested element and haven't captured content yet, add to nested_content
-            if self.nested_element_stack and not self.has_nested_content:
-                self.nested_content += entity_char
+            self._handle_cell_data(entity_char)
 
     def handle_charref(self, name):
-        """Handle character references like &#39;, &#x27;, etc. with enhanced nested element support."""
-        if self.in_th or self.in_td:
-            if name.startswith('x'):
-                char = chr(int(name[1:], 16))
-            else:
-                char = chr(int(name))
+        """Handle character references like &#39;, &#x27;, etc. with enhanced nested element support.
+        
+        Args:
+            name (str): Character reference (e.g., '39', 'x27')
+        """
+        if self._is_in_cell():
+            char = self._decode_char_reference(name)
+            self._handle_cell_data(char)
 
-            # Always add to current_cell for fallback
-            self.current_cell += char
-
-            # If we're inside a nested element and haven't captured content yet, add to nested_content
-            if self.nested_element_stack and not self.has_nested_content:
-                self.nested_content += char
+    def _decode_char_reference(self, name):
+        """Decode a character reference to its corresponding character.
+        
+        Args:
+            name (str): Character reference (e.g., '39', 'x27')
+            
+        Returns:
+            str: The decoded character
+        """
+        if name.startswith('x'):
+            return chr(int(name[1:], 16))
+        else:
+            return chr(int(name))
 
 # --- HTML Table Extraction Functions ---
 
@@ -522,7 +725,7 @@ def save_table_to_csv(headers, rows, filename="extracted_table.csv"):
 
 # --- Contact Lookup and CSV Enrichment Functions ---
 
-def load_contact_mapping(contact_file="assignment_group_contact.csv"):
+def load_contact_mapping(contact_file=DEFAULT_CONTACT_FILENAME):
     """
     Loads contact mapping data from CSV file.
 
@@ -535,46 +738,102 @@ def load_contact_mapping(contact_file="assignment_group_contact.csv"):
     """
     logging.info(f"Loading contact mapping from: {contact_file}")
 
-    contact_mapping = {}
-
-    if not os.path.exists(contact_file):
-        logging.error(f"Contact mapping file not found: {contact_file}")
-        return contact_mapping
+    if not _contact_file_exists(contact_file):
+        return {}
 
     try:
         with open(contact_file, 'r', encoding='utf-8') as csvfile:
             reader = csv.DictReader(csvfile)
-
-            # Validate required columns
-            required_columns = ['AssignmentGroup', 'Contact', 'Email']
-            if not all(col in reader.fieldnames for col in required_columns):
-                logging.error(f"Contact mapping file missing required columns: {required_columns}")
-                logging.error(f"Found columns: {reader.fieldnames}")
-                return contact_mapping
-
-            for row_num, row in enumerate(reader, start=2):  # Start at 2 because of header
-                assignment_group = row['AssignmentGroup'].strip()
-                contact = row['Contact'].strip()
-                email = row['Email'].strip()
-
-                if assignment_group:  # Only add non-empty assignment groups
-                    contact_mapping[assignment_group] = {
-                        'contact': contact,
-                        'email': email
-                    }
-                    logging.debug(f"Loaded mapping: {assignment_group} -> {contact} ({email})")
-                else:
-                    logging.warning(f"Empty AssignmentGroup found in row {row_num}")
-
+            
+            if not _validate_contact_columns(reader.fieldnames):
+                return {}
+            
+            contact_mapping = _process_contact_mapping_rows(reader)
+            
         logging.info(f"Successfully loaded {len(contact_mapping)} contact mappings")
         return contact_mapping
 
     except IOError as e:
         logging.error(f"Error reading contact mapping file '{contact_file}': {e}")
-        return contact_mapping
+        return {}
     except Exception as e:
         logging.error(f"Unexpected error loading contact mapping: {e}")
-        return contact_mapping
+        return {}
+
+def _contact_file_exists(contact_file):
+    """Check if the contact mapping file exists.
+    
+    Args:
+        contact_file (str): Path to the contact file
+        
+    Returns:
+        bool: True if file exists, False otherwise
+    """
+    if not os.path.exists(contact_file):
+        logging.error(f"Contact mapping file not found: {contact_file}")
+        return False
+    return True
+
+def _validate_contact_columns(fieldnames):
+    """Validate that the contact file has required columns.
+    
+    Args:
+        fieldnames (list): List of column names from CSV file
+        
+    Returns:
+        bool: True if all required columns are present, False otherwise
+    """
+    legacy_required_columns = ['AssignmentGroup', 'Contact', 'Email']
+    if not all(col in fieldnames for col in legacy_required_columns):
+        logging.error(f"Contact mapping file missing required columns: {legacy_required_columns}")
+        logging.error(f"Found columns: {fieldnames}")
+        return False
+    return True
+
+def _process_contact_mapping_rows(reader):
+    """Process rows from the contact mapping CSV file.
+    
+    Args:
+        reader: CSV DictReader object
+        
+    Returns:
+        dict: Dictionary mapping assignment groups to contact information
+    """
+    contact_mapping = {}
+    
+    for row_num, row in enumerate(reader, start=2):  # Start at 2 because of header
+        contact_info = _process_contact_mapping_row(row, row_num)
+        if contact_info:
+            assignment_group, contact_data = contact_info
+            contact_mapping[assignment_group] = contact_data
+            logging.debug(f"Loaded mapping: {assignment_group} -> {contact_data['contact']} ({contact_data['email']})")
+    
+    return contact_mapping
+
+def _process_contact_mapping_row(row, row_num):
+    """Process a single row from the contact mapping CSV.
+    
+    Args:
+        row (dict): Row data from CSV
+        row_num (int): Row number for logging
+        
+    Returns:
+        tuple or None: (assignment_group, contact_data) if valid, None if invalid
+    """
+    assignment_group = row['AssignmentGroup'].strip()
+    contact = row['Contact'].strip()
+    email = row['Email'].strip()
+    
+    if not assignment_group:
+        logging.warning(f"Empty AssignmentGroup found in row {row_num}")
+        return None
+    
+    contact_data = {
+        'contact': contact,
+        'email': email
+    }
+    
+    return assignment_group, contact_data
 
 def enrich_csv_with_contacts(csv_file="extracted_table.csv", contact_file="assignment_group_contact.csv"):
     """
@@ -830,13 +1089,70 @@ def _get_proxy_config(user, password, host, port=8080):
     logging.info(f"Proxy configured: {proxy_url.split('@')[1]}")
     return {'https': proxy_url}
 
+def _load_report_configs(config_parser):
+    """Load configuration for multiple reports from environment variables and config file.
+
+    Args:
+        config_parser: ConfigParser object for fallback values
+
+    Returns:
+        list: List of report configuration dictionaries
+    """
+    reports = []
+
+    # Load Report 1
+    report1 = {
+        'name': os.environ.get('SNOW_REPORT1_NAME', 'Report1'),
+        'url': (os.environ.get('SNOW_REPORT1_URL') or
+               config_parser.get('snow', 'report_url', fallback=None)),
+        'payload': (os.environ.get('SNOW_REPORT1_PAYLOAD') or
+                   config_parser.get('snow', 'report_payload', fallback=None)),
+        'output_json': os.environ.get('SNOW_REPORT1_OUTPUT_JSON', 'report1_output.json'),
+        'output_csv': os.environ.get('SNOW_REPORT1_OUTPUT_CSV', 'report1_extracted_table.csv')
+    }
+
+    # Load Report 2
+    report2 = {
+        'name': os.environ.get('SNOW_REPORT2_NAME', 'Report2'),
+        'url': (os.environ.get('SNOW_REPORT2_URL') or
+               config_parser.get('snow', 'report_url', fallback=None)),
+        'payload': (os.environ.get('SNOW_REPORT2_PAYLOAD') or
+                   config_parser.get('snow', 'report_payload', fallback=None)),
+        'output_json': os.environ.get('SNOW_REPORT2_OUTPUT_JSON', 'report2_output.json'),
+        'output_csv': os.environ.get('SNOW_REPORT2_OUTPUT_CSV', 'report2_extracted_table.csv')
+    }
+
+    # Only add reports that have required configuration
+    if report1['url'] and report1['payload']:
+        reports.append(report1)
+        logging.info(f"Loaded configuration for {report1['name']}")
+    else:
+        logging.warning(f"Skipping {report1['name']} - missing URL or payload configuration")
+
+    if report2['url'] and report2['payload']:
+        reports.append(report2)
+        logging.info(f"Loaded configuration for {report2['name']}")
+    else:
+        logging.warning(f"Skipping {report2['name']} - missing URL or payload configuration")
+
+    if not reports:
+        logging.error("No valid report configurations found")
+        sys.exit(1)
+
+    return reports
+
 def _validate_required_config(config):
     """Validates that all required configuration is present."""
-    required_vars = ['report_url', 'user_email', 'user_pass']
+    required_vars = ['user_email', 'user_pass', 'homepage_url', 'saml_acs_url']
     missing_vars = [var for var in required_vars if not config.get(var)]
     if missing_vars:
         missing_env_vars = [f'SNOW_{v.upper()}' for v in missing_vars]
         logging.error(f"Missing required environment variables: {', '.join(missing_env_vars)}")
+        sys.exit(1)
+
+    # Validate that at least one report is configured
+    if not config.get('reports'):
+        logging.error("No report configurations found. Please configure at least one report.")
         sys.exit(1)
 
 def _setup_ssl_config(config):
@@ -863,55 +1179,80 @@ def load_config_file():
         config.read(config_file)    
     return config
 
+def load_env_file():
+    """Load environment variables from .env file if it exists."""
+    env_file = '.env'
+    if os.path.exists(env_file):
+        logging.info(f"Loading environment variables from {env_file}")
+        with open(env_file, 'r', encoding='utf-8') as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith('#') and '=' in line:
+                    key, value = line.split('=', 1)
+                    # Only set if not already in environment
+                    if key not in os.environ:
+                        os.environ[key] = value
+    else:
+        logging.info("No .env file found, using system environment variables")
+
 def get_config(args):
-    """Reads and validates configuration from config file and command-line arguments.
-    
-    Command-line arguments take precedence over config file values for proxy credentials.
-    Other settings are loaded from config file with fallback to environment variables.
-    
+    """Reads and validates configuration from config file, environment variables, and command-line arguments.
+
+    Priority order: command-line args > environment variables > config file
+
     Args:
         args: Parsed command-line arguments from argparse
-    
+
     Returns:
         dict: Configuration dictionary with all required settings
     """
+    # Load .env file first
+    load_env_file()
+
     config_parser = load_config_file()
-    
-    # Get proxy credentials with command-line precedence, then config file, then environment
-    proxy_user = (args.proxy_user or 
-                 config_parser.get('proxy', 'user', fallback=None) or 
-                 os.environ.get('user', None))
-    proxy_pass = (args.proxy_pass or 
-                 config_parser.get('proxy', 'pass', fallback=None) or 
-                 os.environ.get('pass', None))
-    
+
+    # Get proxy credentials with command-line precedence, then environment, then config file
+    proxy_user = (args.proxy_user or
+                 os.environ.get('SNOW_PROXY_USER') or
+                 config_parser.get('proxy', 'user', fallback=None))
+    proxy_pass = (args.proxy_pass or
+                 os.environ.get('SNOW_PROXY_PASS') or
+                 config_parser.get('proxy', 'pass', fallback=None))
+
     config = {
         'proxy_user': proxy_user,
         'proxy_pass': proxy_pass,
-        'proxy_host': config_parser.get('proxy', 'host', fallback=None),
-        'user_email': config_parser.get('snow', 'user_email', fallback=None),
-        'user_pass': proxy_pass,
-        'homepage_url': config_parser.get('snow', 'homepage_url', fallback=None),
-        'saml_acs_url': config_parser.get('snow', 'saml_acs_url', fallback=None),
-        'report_url': config_parser.get('snow', 'report_url', fallback=None),
-        'report_payload': config_parser.get('snow', 'report_payload', fallback=None),
+        'proxy_host': (os.environ.get('SNOW_PROXY_HOST') or
+                      config_parser.get('proxy', 'host', fallback=None)),
+        'user_email': (os.environ.get('SNOW_USER_EMAIL') or
+                      config_parser.get('snow', 'user_email', fallback=None)),
+        'user_pass': (os.environ.get('SNOW_USER_PASS') or
+                     config_parser.get('snow', 'user_password', fallback=None)),
+        'homepage_url': (os.environ.get('SNOW_HOMEPAGE_URL') or
+                        config_parser.get('snow', 'homepage_url', fallback=None)),
+        'saml_acs_url': (os.environ.get('SNOW_SAML_ACS_URL') or
+                        config_parser.get('snow', 'saml_acs_url', fallback=None)),
+        'referer_url': (os.environ.get('SNOW_REFERER_URL') or
+                       config_parser.get('snow', 'referer', fallback=None)),
         'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
         'accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
         'accept_language': 'en-US,en;q=0.9',
-        'referer_url': config_parser.get('snow', 'referer_url', fallback=None),
         'connection_header': 'keep-alive',
         'upgrade_insecure_requests': '1',
-        'disable_ssl_warnings': config_parser.get('ssl', 'disable_warnings', fallback='true').lower() == 'true',
-        'ssl_verify': config_parser.get('ssl', 'verify', fallback='false').lower() == 'true'
+        'disable_ssl_warnings': (os.environ.get('SNOW_SSL_DISABLE_WARNINGS', 'true').lower() == 'true'),
+        'ssl_verify': (os.environ.get('SNOW_SSL_VERIFY', 'false').lower() == 'true')
     }
-    
+
+    # Load report configurations
+    config['reports'] = _load_report_configs(config_parser)
+
     # Setup proxies configuration
     if proxy_user and proxy_pass and config['proxy_host']:
         config['proxies'] = _get_proxy_config(proxy_user, proxy_pass, config['proxy_host'])
-    
+
     _validate_required_config(config)
     _setup_ssl_config(config)
-    
+
     return config
 
 # --- Session Setup ---
@@ -1645,61 +1986,103 @@ def perform_saml_authentication(session, config):
         logging.exception(f"Unexpected error during authentication flow: {e}")
         return None
 
-def fetch_final_report(session, report_url, report_payload, x_user_token):
-    """Uses the authenticated session to fetch the final report and processes table data."""
-    logging.info(f"--- Step 5: Fetching Final Report from: {report_url} ---")
+def fetch_single_report(session, report_config, x_user_token):
+    """Uses the authenticated session to fetch a single report and processes table data.
+
+    Args:
+        session: Authenticated requests session
+        report_config: Dictionary containing report configuration (name, url, payload, output files)
+        x_user_token: ServiceNow user token for authentication
+
+    Returns:
+        bool: True if successful, False otherwise
+    """
+    logging.info(f"--- Fetching {report_config['name']} from: {report_config['url']} ---")
 
     headers = {
         'Content-Type': JSON_CONTENT_TYPE,
         'Accept': 'application/json, text/plain, */*',
-        'Referer': report_url,
+        'Referer': report_config['url'],
         'X-Requested-With': XML_HTTP_REQUEST,
         'X-Usertoken': x_user_token
     }
 
-    log_request_headers(headers, "Final Report POST Request Headers", session)
-    logging.debug(f"Report POST URL: {report_url}")
-    logging.debug(f"Report POST Payload: {report_payload}")
+    log_request_headers(headers, f"{report_config['name']} POST Request Headers", session)
+    logging.debug(f"Report POST URL: {report_config['url']}")
+    logging.debug(f"Report POST Payload: {report_config['payload']}")
 
     try:
         report_response = _make_post_request(
-            session, report_url, report_payload, headers, allow_redirects=True
+            session, report_config['url'], report_config['payload'], headers, allow_redirects=True
         )
 
-        log_response_headers(report_response, "Final Report Response Headers")
+        log_response_headers(report_response, f"{report_config['name']} Response Headers")
 
         # Assume response content is always JSON and save directly
         try:
             json_content = json.dumps(report_response.json(), indent=4)
-            filename = "report_output.json"
-            save_content_to_file(json_content, filename, False)
+            save_content_to_file(json_content, report_config['output_json'], False)
 
             # Process the JSON to extract table data and save as CSV
-            logging.info("--- Step 5.1: Processing HTML table data from report ---")
-            csv_success = process_report_json_to_csv(filename, "extracted_table.csv")
+            logging.info(f"--- Processing HTML table data from {report_config['name']} ---")
+            csv_success = process_report_json_to_csv(report_config['output_json'], report_config['output_csv'])
             if csv_success:
-                logging.info("Successfully extracted, enriched, and saved table data to CSV")
+                logging.info(f"Successfully extracted, enriched, and saved {report_config['name']} table data to CSV")
             else:
-                logging.warning("Failed to extract table data from report")
+                logging.warning(f"Failed to extract table data from {report_config['name']}")
 
         except json.JSONDecodeError:
-            logging.warning("Response is not valid JSON. Saving as raw text.")
-            save_content_to_file(report_response.text, "report_output.txt", False)
+            logging.warning(f"{report_config['name']} response is not valid JSON. Saving as raw text.")
+            txt_filename = report_config['output_json'].replace('.json', '.txt')
+            save_content_to_file(report_response.text, txt_filename, False)
 
         if report_response.status_code == HTTP_OK:
-            logging.info("Successfully fetched final report.")
-            return report_response
+            logging.info(f"Successfully fetched {report_config['name']}.")
+            return True
         else:
-            logging.error(f"Failed to fetch final report. Status code: {report_response.status_code}")
-            return None
+            logging.error(f"Failed to fetch {report_config['name']}. Status code: {report_response.status_code}")
+            return False
 
     except RequestError:
-        return None
+        return False
 
-def download_snow_report(config):
-    """Orchestrates the entire workflow: authentication and report fetching."""
-    logging.info("--- Starting SNOW Report Workflow ---")
-    
+def fetch_multiple_reports(session, report_configs, x_user_token):
+    """Uses the authenticated session to fetch multiple reports sequentially.
+
+    Args:
+        session: Authenticated requests session
+        report_configs: List of report configuration dictionaries
+        x_user_token: ServiceNow user token for authentication
+
+    Returns:
+        dict: Dictionary with report names as keys and success status as values
+    """
+    logging.info(f"--- Step 5: Fetching {len(report_configs)} Reports ---")
+
+    results = {}
+
+    for i, report_config in enumerate(report_configs, 1):
+        logging.info(f"--- Processing Report {i}/{len(report_configs)}: {report_config['name']} ---")
+
+        success = fetch_single_report(session, report_config, x_user_token)
+        results[report_config['name']] = success
+
+        if success:
+            logging.info(f"✓ {report_config['name']} completed successfully")
+        else:
+            logging.error(f"✗ {report_config['name']} failed")
+
+        # Add a small delay between reports to be respectful to the server
+        if i < len(report_configs):
+            logging.debug("Waiting 2 seconds before next report...")
+            time.sleep(2)
+
+    return results
+
+def download_snow_reports(config):
+    """Orchestrates the entire workflow: authentication and multiple report fetching."""
+    logging.info("--- Starting SNOW Multi-Report Workflow ---")
+
     session = setup_session(config)
     authenticated_response = perform_saml_authentication(session, config)
 
@@ -1707,23 +2090,40 @@ def download_snow_report(config):
         logging.error("Authentication failed. Aborting report workflow.")
         return False
 
-    logging.info("Authentication successful. Attempting to fetch report.")
-    
+    logging.info("Authentication successful. Attempting to fetch reports.")
+
     # Extract user token from the authenticated response
     x_user_token = extract_snow_usertoken(authenticated_response.text)
     if not x_user_token:
         logging.warning("Could not extract user token from authenticated response.")
-    
-    final_report_response = fetch_final_report(
-        session, config['report_url'], config['report_payload'], x_user_token
-    )
-    
-    if final_report_response:
-        logging.info("Report workflow completed successfully.")
-        return True
+
+    # Fetch all configured reports
+    results = fetch_multiple_reports(session, config['reports'], x_user_token)
+
+    # Analyze results
+    successful_reports = [name for name, success in results.items() if success]
+    failed_reports = [name for name, success in results.items() if not success]
+
+    logging.info(f"--- Report Workflow Summary ---")
+    logging.info(f"Total reports configured: {len(config['reports'])}")
+    logging.info(f"Successful reports: {len(successful_reports)}")
+    logging.info(f"Failed reports: {len(failed_reports)}")
+
+    if successful_reports:
+        logging.info(f"✓ Successfully downloaded: {', '.join(successful_reports)}")
+
+    if failed_reports:
+        logging.error(f"✗ Failed to download: {', '.join(failed_reports)}")
+
+    # Return True if at least one report was successful
+    overall_success = len(successful_reports) > 0
+
+    if overall_success:
+        logging.info("Multi-report workflow completed with at least one successful download.")
     else:
-        logging.error("Failed to fetch final report.")
-        return False
+        logging.error("Multi-report workflow failed - no reports were successfully downloaded.")
+
+    return overall_success
 
 def test_table_extraction():
     """Test the table extraction functionality with sample HTML including nested content scenarios."""
@@ -1959,10 +2359,10 @@ def main():
             logging.error("Configuration could not be loaded. Exiting.")
             sys.exit(1)
 
-        if download_snow_report(config):
-            logging.info("SNOW report generation workflow finished successfully.")
+        if download_snow_reports(config):
+            logging.info("SNOW multi-report generation workflow finished successfully.")
         else:
-            logging.error("SNOW report generation workflow failed.")
+            logging.error("SNOW multi-report generation workflow failed.")
 
     except Exception as e:
         logging.exception(f"An unhandled error occurred in main: {e}")

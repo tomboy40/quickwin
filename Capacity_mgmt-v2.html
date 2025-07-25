@@ -1,0 +1,525 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Capacity Management: An Initiative Briefing</title>
+    
+    <!-- Font Awesome CDN -->
+    <link rel="stylesheet" href="https://cdn.staticfile.org/font-awesome/6.4.0/css/all.min.css">
+    
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Lato:wght@300;400;700&family=Montserrat:wght@400;600;700&display=swap" rel="stylesheet">
+
+    <style>
+        /* --- CSS Reset & Base Styles --- */
+        :root {
+            --primary-color: #0A2342;
+            --secondary-color: #F0F0F0;
+            --accent-color: #00A99D;
+            --text-light: #FFFFFF;
+            --text-dark: #333333;
+            --text-muted: #666666;
+            --slide-bg: #FFFFFF;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        html, body {
+            height: 100%;
+            font-family: 'Lato', sans-serif;
+            background-color: var(--secondary-color);
+            color: var(--text-dark);
+            overflow: hidden;
+        }
+
+        /* --- Presentation Container & Slides --- */
+        .presentation-container {
+            position: relative;
+            width: 100%;
+            height: 100%;
+        }
+
+        .slide {
+            display: none;
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            padding: 4rem 5rem;
+            background-color: var(--slide-bg);
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            text-align: center;
+            opacity: 0;
+            transition: opacity 0.6s ease-in-out;
+            overflow-y: auto;
+        }
+
+        .slide.active {
+            display: flex;
+            opacity: 1;
+            z-index: 1;
+        }
+
+        /* --- Slide Navigation --- */
+        .nav-button {
+            position: fixed;
+            z-index: 1001; /* Above modal overlay */
+            bottom: 2rem;
+            background-color: var(--primary-color);
+            color: var(--text-light);
+            border: none;
+            border-radius: 50%;
+            width: 50px;
+            height: 50px;
+            font-size: 1.5rem;
+            cursor: pointer;
+            transition: background-color 0.3s ease, transform 0.3s ease;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.2);
+        }
+
+        .nav-button:hover {
+            background-color: var(--accent-color);
+            transform: scale(1.1);
+        }
+
+        #prev-btn { left: 2rem; }
+        #next-btn { right: 2rem; }
+        #prev-btn.hidden, #next-btn.hidden { display: none; }
+
+        /* --- Typography & Content Styles --- */
+        h1, h2, h3 {
+            font-family: 'Montserrat', sans-serif;
+            color: var(--primary-color);
+            margin-bottom: 1rem;
+        }
+
+        h1 { font-size: 3rem; font-weight: 700; }
+        h2 { font-size: 2.2rem; font-weight: 600; margin-bottom: 2rem; }
+        h1 + .subtitle { font-size: 1.25rem; color: var(--text-muted); font-weight: 300; max-width: 700px; margin-left: auto; margin-right: auto; }
+
+        p {
+            font-size: 1.1rem;
+            line-height: 1.6;
+            max-width: 800px;
+            margin-bottom: 1.5rem;
+            margin-left: auto;
+            margin-right: auto;
+        }
+        
+        strong { color: var(--primary-color); }
+        
+        .slide-content {
+            width: 100%;
+            max-width: 1200px;
+        }
+        
+        /* --- Component Styles --- */
+        
+        /* Card layout */
+        .card-container {
+            display: flex;
+            justify-content: center;
+            gap: 2rem;
+            flex-wrap: wrap;
+            width: 100%;
+            margin-top: 2rem;
+        }
+
+        .card {
+            background-color: #f9f9f9;
+            border: 1px solid #e0e0e0;
+            border-radius: 8px;
+            padding: 2rem;
+            flex: 1;
+            min-width: 250px;
+            max-width: 350px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+            transition: transform 0.3s, box-shadow 0.3s;
+        }
+        .card:hover { transform: translateY(-5px); box-shadow: 0 6px 15px rgba(0,0,0,0.1); }
+        .card .icon { font-size: 3rem; color: var(--accent-color); margin-bottom: 1rem; }
+        .card h3 { font-size: 1.4rem; color: var(--primary-color); }
+        .card p { font-size: 1rem; color: var(--text-muted); margin-bottom: 0; }
+        
+        /* Bullet point list styles */
+        .bullet-list { list-style: none; padding: 0; max-width: 100%; margin: 0; text-align: left; }
+        .bullet-list li { display: flex; align-items: flex-start; font-size: 1.1rem; line-height: 1.6; margin-bottom: 1.25rem; }
+        .bullet-list .fa-solid { margin-right: 1rem; margin-top: 6px; color: var(--accent-color); font-size: 1.2rem; }
+        
+        /* Two Column Layout for Image Placeholders */
+        .two-col-layout { display: flex; align-items: center; gap: 3rem; width: 100%; }
+        .image-col { flex: 1; max-width: 350px; }
+        .text-col { flex: 2; text-align: left; }
+        
+        .image-placeholder {
+            border: 3px dashed #ccc;
+            border-radius: 8px;
+            height: 300px;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            color: #aaa;
+            cursor: pointer;
+            transition: border-color 0.3s, color 0.3s;
+        }
+        .image-placeholder:hover { border-color: var(--accent-color); color: var(--accent-color); }
+        .image-placeholder .fa-solid { font-size: 4rem; margin-bottom: 1rem; }
+
+        /* --- Horizontal Timeline for Roadmap (FINAL REVISED LAYOUT) --- */
+        .horizontal-timeline {
+            width: 100%;
+            padding: 30px 0;
+            margin-top: 2rem;
+        }
+        .timeline-wrapper {
+            display: flex;
+            justify-content: space-between;
+            position: relative;
+        }
+        .timeline-wrapper::before { /* The horizontal line */
+            content: '';
+            position: absolute;
+            bottom: 8px; /* Y-position of the line, to center dots */
+            left: 0;
+            width: 100%;
+            height: 4px;
+            background-color: var(--accent-color);
+        }
+        .timeline-step {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            text-align: center;
+            position: relative;
+            flex: 1;
+            padding-bottom: 30px; /* Space for the dot */
+        }
+        .timeline-dot {
+            width: 20px;
+            height: 20px;
+            background-color: var(--slide-bg);
+            border: 4px solid var(--primary-color);
+            border-radius: 50%;
+            z-index: 1; /* Above the line */
+            position: absolute; /* Position relative to step */
+            bottom: 0; /* Align to the bottom of the step's padding */
+            left: 50%;
+            transform: translateX(-50%);
+        }
+        .timeline-content-card {
+            background: #f9f9f9;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            padding: 1rem;
+            width: 90%;
+            max-width: 220px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+            margin-bottom: 0; /* No longer needed */
+            position: relative;
+        }
+        .timeline-content-card h3 { font-size: 1.1rem; margin-bottom: 0.5rem; }
+        .timeline-content-card .date { font-weight: bold; color: var(--accent-color); font-size: 0.9rem; margin-bottom: 0.5rem; }
+        .timeline-content-card p { font-size: 0.9rem; line-height: 1.4; margin: 0; }
+        
+        /* Image Modal (Lightbox) */
+        .modal {
+            display: none;
+            position: fixed;
+            z-index: 1000;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            overflow: auto;
+            background-color: rgba(0,0,0,0.85);
+            justify-content: center;
+            align-items: center;
+        }
+        .modal-content { max-width: 80%; max-height: 80%; display: block; margin: auto; }
+        .modal-close { position: absolute; top: 25px; right: 45px; color: #f1f1f1; font-size: 40px; font-weight: bold; transition: 0.3s; cursor: pointer; }
+        .modal-close:hover { color: #bbb; }
+
+
+        /* Specific Slide Layouts */
+        #slide-1 { background: linear-gradient(rgba(255, 255, 255, 0.9), rgba(255, 255, 255, 0.9)), url('data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" width="100" height="100" viewBox="0 0 100 100"%3E%3Cg fill-rule="evenodd"%3E%3Cg fill="%230A2342" fill-opacity="0.05"%3E%3Cpath opacity=".5" d="M96 95h4v1h-4v4h-1v-4h-9v4h-1v-4h-9v4h-1v-4h-9v4h-1v-4h-9v4h-1v-4h-9v4h-1v-4h-9v4h-1v-4h-9v4h-1v-4H0v-1h15v-9H0v-1h15v-9H0v-1h15v-9H0v-1h15v-9H0v-1h15v-9H0v-1h15v-9H0v-1h15v-9H0v-1h15v-9H0v-1h15V0h1v15h9V0h1v15h9V0h1v15h9V0h1v15h9V0h1v15h9V0h1v15h9V0h1v15h9V0h1v15h4v1h-4v9h4v1h-4v9h4v1h-4v9h4v1h-4v9h4v1h-4v9h4v1h-4v9h4v1h-4v9h4v1h-4v9zm-1 0v-9h-9v9h9zm-10 0v-9h-9v9h9zm-10 0v-9h-9v9h9zm-10 0v-9h-9v9h9zm-10 0v-9h-9v9h9zm-10 0v-9h-9v9h9zm-10 0v-9h-9v9h9zm-10 0v-9h-9v9h9zm-9-10h9v-9h-9v9zm10 0h9v-9h-9v9zm10 0h9v-9h-9v9zm10 0h9v-9h-9v9zm10 0h9v-9h-9v9zm10 0h9v-9h-9v9zm10 0h9v-9h-9v9zm10 0h9v-9h-9v9zm9-10v-9h-9v9h9zm-10 0v-9h-9v9h9zm-10 0v-9h-9v9h9zm-10 0v-9h-9v9h9zm-10 0v-9h-9v9h9zm-10 0v-9h-9v9h9zm-10 0v-9h-9v9h9zm-10 0v-9h-9v9h9zm-9-10h9v-9h-9v9zm10 0h9v-9h-9v9zm10 0h9v-9h-9v9zm10 0h9v-9h-9v9zm10 0h9v-9h-9v9zm10 0h9v-9h-9v9zm10 0h9v-9h-9v9zm10 0h9v-9h-9v9zm9-10v-9h-9v9h9zm-10 0v-9h-9v9h9zm-10 0v-9h-9v9h9zm-10 0v-9h-9v9h9zm-10 0v-9h-9v9h9zm-10 0v-9h-9v9h9zm-10 0v-9h-9v9h9zm-10 0v-9h-9v9h9zm-9-10h9v-9h-9v9zm10 0h9v-9h-9v9zm10 0h9v-9h-9v9zm10 0h9v-9h-9v9zm10 0h9v-9h-9v9zm10 0h9v-9h-9v9zm10 0h9v-9h-9v9zm10 0h9v-9h-9v9zm9-10v-9h-9v9h9zm-10 0v-9h-9v9h9zm-10 0v-9h-9v9h9zm-10 0v-9h-9v9h9zm-10 0v-9h-9v9h9zm-10 0v-9h-9v9h9zm-10 0v-9h-9v9h9zm-10 0v-9h-9v9h9zm-9-10h9v-9h-9v9zm10 0h9v-9h-9v9zm10 0h9v-9h-9v9zm10 0h9v-9h-9v9zm10 0h9v-9h-9v9zm10 0h9v-9h-9v9zm10 0h9v-9h-9v9zm10 0h9v-9h-9v9z"/%3E%3Cpath d="M6 5V0h1v5h9V0h1v5h9V0h1v5h9V0h1v5h9V0h1v5h9V0h1v5h9V0h1v5h9V0h1v5h4v1h-4v9h4v1h-4v9h4v1h-4v9h4v1h-4v9h4v1h-4v9h4v1h-4v9h4v1h-4v9h4v1h-4v9h-1v-9h-9v9h-1v-9h-9v9h-1v-9h-9v9h-1v-9h-9v9h-1v-9h-9v9h-1v-9h-9v9h-1v-9h-9v9H6v-1h9v-9H6v-1h9v-9H6v-1h9v-9H6v-1h9v-9H6v-1h9v-9H6v-1h9v-9H6V5zm10 1h9v9h-9V6zm10 0h9v9h-9V6zm10 0h9v9h-9V6zm10 0h9v9h-9V6zm10 0h9v9h-9V6zm10 0h9v9h-9V6zm10 0h9v9h-9V6zm10 0h9v9h-9V6zM6 16h9v9H6v-9zm10 0h9v9h-9v-9zm10 0h9v9h-9v-9zm10 0h9v9h-9v-9zm10 0h9v9h-9v-9zm10 0h9v9h-9v-9zm10 0h9v9h-9v-9zm10 0h9v9h-9v-9zM6 26h9v9H6v-9zm10 0h9v9h-9v-9zm10 0h9v9h-9v-9zm10 0h9v9h-9v-9zm10 0h9v9h-9v-9zm10 0h9v9h-9v-9zm10 0h9v9h-9v-9zm10 0h9v9h-9v-9zM6 36h9v9H6v-9zm10 0h9v9h-9v-9zm10 0h9v9h-9v-9zm10 0h9v9h-9v-9zm10 0h9v9h-9v-9zm10 0h9v9h-9v-9zm10 0h9v9h-9v-9zm10 0h9v9h-9v-9zM6 46h9v9H6v-9zm10 0h9v9h-9v-9zm10 0h9v9h-9v-9zm10 0h9v9h-9v-9zm10 0h9v9h-9v-9zm10 0h9v9h-9v-9zm10 0h9v9h-9v-9zm10 0h9v9h-9v-9zM6 56h9v9H6v-9zm10 0h9v9h-9v-9zm10 0h9v9h-9v-9zm10 0h9v9h-9v-9zm10 0h9v9h-9v-9zm10 0h9v9h-9v-9zm10 0h9v9h-9v-9zm10 0h9v9h-9v-9zM6 66h9v9H6v-9zm10 0h9v9h-9v-9zm10 0h9v9h-9v-9zm10 0h9v9h-9v-9zm10 0h9v9h-9v-9zm10 0h9v9h-9v-9zm10 0h9v9h-9v-9zm10 0h9v9h-9v-9zM6 76h9v9H6v-9zm10 0h9v9h-9v-9zm10 0h9v9h-9v-9zm10 0h9v9h-9v-9zm10 0h9v9h-9v-9zm10 0h9v9h-9v-9zm10 0h9v9h-9v-9zm10 0h9v9h-9v-9zM6 86h9v9H6v-9zm10 0h9v9h-9v-9zm10 0h9v9h-9v-9zm10 0h9v9h-9v-9zm10 0h9v9h-9v-9zm10 0h9v9h-9v-9zm10 0h9v9h-9v-9zm10 0h9v9h-9v-9z"/%3E%3C/g%3E%3C/g%3E%3C/svg%3E');
+            background-size: auto;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="presentation-container">
+        
+        <!-- Slide 1: Title Slide -->
+        <section class="slide active" id="slide-1">
+            <div class="slide-content">
+                <h1>TRCB - Capacity Management</h1>
+                <p class="subtitle">Aligning our IT infrastructure with business needs for a <strong>resilient future</strong>.</p>
+            </div>
+        </section>
+
+        <!-- Slide 2: The Core Concept -->
+        <section class="slide" id="slide-2">
+            <div class="slide-content">
+                <h2>What is Capacity Management?</h2>
+                <p>It's a mandatory process to ensure we always have the right resources to meet business demand, perfectly balanced across performance, timing, and cost.</p>
+                <div class="card-container">
+                    <div class="card">
+                        <div class="icon"><i class="fa-solid fa-server"></i></div>
+                        <h3>Right Capacity</h3>
+                        <p><strong>Sufficient infrastructure</strong> to meet defined performance requirements.</p>
+                    </div>
+                    <div class="card">
+                        <div class="icon"><i class="fa-solid fa-sitemap"></i></div>
+                        <h3>Right Place</h3>
+                        <p>Correct resource allocation across all architecture layers to <strong>prevent bottlenecks</strong>.</p>
+                    </div>
+                    <div class="card">
+                        <div class="icon"><i class="fa-solid fa-clock"></i></div>
+                        <h3>Right Time</h3>
+                        <p><strong>Proactive, just-in-time</strong> provisioning for business needs—not too early, not too late.</p>
+                    </div>
+                    <div class="card">
+                        <div class="icon"><i class="fa-solid fa-dollar-sign"></i></div>
+                        <h3>Right Cost</h3>
+                        <p><strong>Avoiding over-provisioning</strong> to prevent unnecessary software, power, and support costs.</p>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Slide 3: The "Why" (REVISED LAYOUT) -->
+        <section class="slide" id="slide-3">
+            <div class="slide-content" style="max-width: 800px;">
+                <h2>Key Benefits</h2>
+                 <ul class="bullet-list" style="margin-top: 2rem;">
+                    <li><i class="fa-solid fa-shield-halved"></i><div><strong>Improved Service Availability:</strong> To <strong>reduce or eliminate incidents</strong> caused by a lack of capacity.</div></li>
+                    <li><i class="fa-solid fa-chart-line"></i><div><strong>Accurate Investment Forecasting:</strong> To <strong>align IT spending</strong> with budget cycles and avoid unplanned costs.</div></li>
+                    <li><i class="fa-solid fa-gauge-high"></i><div><strong>Optimized Performance:</strong> To <strong>monitor consumption</strong> and identify bottlenecks before they impact service.</div></li>
+                    <li><i class="fa-solid fa-expand"></i><div><strong>Smarter Scaling:</strong> To identify and <strong>mitigate risks</strong> associated with rapid business growth.</div></li>
+                    <li><i class="fa-solid fa-arrows-rotate"></i><div><strong>Continual Improvement:</strong> To systematically <strong>highlight and address</strong> the next constraint in our services.</div></li>
+                </ul>
+            </div>
+        </section>
+        
+        <!-- Slide 4: Current State (REVISED) -->
+        <section class="slide" id="slide-4">
+            <div class="slide-content">
+                <h2>Current State</h2>
+                <div class="two-col-layout" style="margin-top: 2rem;">
+                    <div class="image-col">
+                        <!-- The 'data-src' should point to your full-size image -->
+                        <div class="image-placeholder" data-src="https://i.imgur.com/uN14mmc.png">
+                            <i class="fa-solid fa-image"></i>
+                            <p>Click to view architecture</p>
+                        </div>
+                    </div>
+                    <div class="text-col">
+                        <ul class="bullet-list">
+                            <li><i class="fa-solid fa-server"></i><div><strong>Focus:</strong> Our current process centers on <strong>infrastructure health</strong>, primarily monitoring CPU, memory, and storage.</div></li>
+                            <li><i class="fa-solid fa-microchip"></i><div><strong>Tooling:</strong> We use the <strong>Athene (SCM)</strong> tool and its "Service Views" for <strong>predictive analytics</strong>.</div></li>
+                            <li><i class="fa-solid fa-bell"></i><div><strong>Process:</strong> The system projects usage trends and automatically raises alerts if a <strong>potential breach is forecasted</strong>.</div></li>                            
+                        </ul>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Slide 5: Future Vision (REVISED) -->
+        <section class="slide" id="slide-5">
+            <div class="slide-content">
+                <h2>Future State</h2>
+                <div class="two-col-layout" style="margin-top: 2rem;">
+                    <div class="image-col">
+                         <!-- The 'data-src' should point to your full-size image -->
+                        <div class="image-placeholder" data-src="https://i.imgur.com/7y6o12L.png">
+                            <i class="fa-solid fa-image"></i>
+                            <p>Click to view framework</p>
+                        </div>
+                    </div>
+                    <div class="text-col">
+                        <p style="text-align: left; max-width: 100%; margin-bottom: 1rem;">The central team is creating a <strong>Capacity Management Practice Framework (CMPF)</strong> for a more proactive, holistic, and business-aligned future. This new approach aims to deliver:</p>
+                        <ul class="bullet-list">
+                            <li><i class="fa-solid fa-briefcase"></i><div><strong>Business-Aligned Planning:</strong> To <strong>integrate business growth plans</strong> directly into forecasting.</div></li>
+                            <li><i class="fa-solid fa-layer-group"></i><div><strong>Expanded Scope:</strong> To <strong>broaden focus</strong> beyond infrastructure to include IT Assets and Business Services</div></li>
+                            <li><i class="fa-solid fa-people-group"></i><div><strong>Consistent Practice:</strong> To establish standardized <strong>"Playbooks"</strong> across GBGFs.</div></li>
+                            <li><i class="fa-solid fa-flag-checkered"></i><div><strong>Proactive Risk Management:</strong> To <strong>redesign controls and KCIs</strong> to anticipate and mitigate risks.</div></li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+        </section>
+        
+        <!-- Slide 6: Roadmap (REVISED) -->
+        <section class="slide" id="slide-6">
+            <div class="slide-content">
+                <h2>Milestones</h2>
+                <p>This is a <strong>multi-phases journey</strong> driven by the central team. Here is the high-level timeline of planned milestones.</p>
+                <div class="horizontal-timeline">
+                    <div class="timeline-wrapper">
+                        <div class="timeline-step">
+                            <div class="timeline-content-card">
+                                <h3>PoC & Assessment</h3>
+                                <div class="date">May - July 2025</div>
+                                <p><strong>Kick-off</strong> with a Proof of Concept to gather requirements.</p>
+                            </div>
+                            <div class="timeline-dot"></div>
+                        </div>
+                        <div class="timeline-step">
+                             <div class="timeline-content-card">
+                                <h3>Playbooks & Controls</h3>
+                                <div class="date">Aug - Sep 2025</div>
+                                <p><strong>Develop playbooks</strong> and pilot the redesigned control framework.</p>
+                            </div>
+                            <div class="timeline-dot"></div>
+                        </div>
+                        <div class="timeline-step">
+                            <div class="timeline-content-card">
+                                <h3>Targeted Adoption</h3>
+                                <div class="date">Jan - Feb 2026</div>
+                                <p><strong>Implement new practices</strong> for critical UK & HK services.</p>
+                            </div>
+                            <div class="timeline-dot"></div>
+                        </div>
+                        <div class="timeline-step">
+                             <div class="timeline-content-card">
+                                <h3>Scaled Adoption</h3>
+                                <div class="date">June - Dec 2026</div>
+                                <p><strong>Embed new capabilities</strong> across all GBGFs for long-term sustainability.</p>
+                            </div>
+                            <div class="timeline-dot"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Slide 7: The "Ask" (REVISED) -->
+        <section class="slide" id="slide-7">
+             <div class="slide-content" style="max-width: 850px;">
+                <h2>What This Means</h2>
+                <p>Driven by a central team, and many details are still being defined.</p>
+                <ul class="bullet-list">
+                    <li>
+                        <i class="fa-solid fa-user-tie"></i>
+                        <div>
+                            <strong>Workstream Member (at this stage)</strong><br>
+                            <strong>Review drafts</strong> of the CMPF and playbooks from our perspective and <strong>provide feedback</strong> to the central team.
+                        </div>
+                    </li>
+                     <li>
+                        <i class="fa-solid fa-users"></i>
+                        <div>
+                            <strong>Application Team (planning & execution)</strong><br>
+                            There are <strong>no specific actions required from the team for now</strong>. As the framework matures, the involvement will be in execution—likely reviewing and adopting the new playbooks for our services in <strong>late 2025 and 2026</strong>.
+                        </div>
+                    </li>
+                </ul>
+            </div>
+        </section>
+
+        <!-- Slide 8: Closing Slide -->
+        <section class="slide" id="slide-8">
+            <div class="slide-content">
+                <h1>Questions & Discussion</h1>
+                <p class="subtitle">Let's build a more resilient system together.</p>
+            </div>
+        </section>
+
+    </div>
+
+    <!-- Image Modal HTML Structure -->
+    <div id="imageModal" class="modal">
+        <span class="modal-close">×</span>
+        <img class="modal-content" id="modalImage">
+    </div>
+
+    <!-- Navigation Buttons -->
+    <button id="prev-btn" class="nav-button"><i class="fas fa-arrow-left"></i></button>
+    <button id="next-btn" class="nav-button"><i class="fas fa-arrow-right"></i></button>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            // --- JavaScript for Slide Navigation ---
+            const slides = document.querySelectorAll('.slide');
+            const prevBtn = document.getElementById('prev-btn');
+            const nextBtn = document.getElementById('next-btn');
+            let currentSlide = 0;
+            
+            function showSlide(n) {
+                if (slides[currentSlide]) slides[currentSlide].classList.remove('active');
+                currentSlide = Math.max(0, Math.min(n, slides.length - 1));
+                if (slides[currentSlide]) slides[currentSlide].classList.add('active');
+                updateNavButtons();
+            }
+
+            function changeSlide(direction) {
+                const newSlideIndex = currentSlide + direction;
+                if (newSlideIndex >= 0 && newSlideIndex < slides.length) {
+                    showSlide(newSlideIndex);
+                }
+            }
+
+            function updateNavButtons() {
+                prevBtn.classList.toggle('hidden', currentSlide === 0);
+                nextBtn.classList.toggle('hidden', currentSlide === slides.length - 1);
+            }
+            
+            prevBtn.addEventListener('click', () => changeSlide(-1));
+            nextBtn.addEventListener('click', () => changeSlide(1));
+
+            document.addEventListener('keydown', (e) => {
+                if (e.key === 'ArrowRight' || e.key === 'PageDown') {
+                    if (document.getElementById('imageModal').style.display !== 'flex') {
+                        changeSlide(1);
+                    }
+                } else if (e.key === 'ArrowLeft' || e.key === 'PageUp') {
+                     if (document.getElementById('imageModal').style.display !== 'flex') {
+                        changeSlide(-1);
+                    }
+                } else if (e.key === 'Escape') {
+                    closeModal();
+                }
+            });
+            
+            // --- JavaScript for Image Modal ---
+            const modal = document.getElementById('imageModal');
+            const modalImg = document.getElementById('modalImage');
+            const placeholders = document.querySelectorAll('.image-placeholder');
+            const closeBtn = document.querySelector('.modal-close');
+
+            function openModal(e) {
+                modal.style.display = "flex";
+                // NOTE: Replace the 'data-src' value with the path to your actual image
+                modalImg.src = e.currentTarget.getAttribute('data-src');
+            }
+            
+            function closeModal() {
+                modal.style.display = "none";
+            }
+
+            placeholders.forEach(p => p.addEventListener('click', openModal));
+            closeBtn.addEventListener('click', closeModal);
+            modal.addEventListener('click', (e) => {
+                if(e.target === modal){ // close only if clicking on the background
+                    closeModal();
+                }
+            });
+
+            // Initial setup
+            showSlide(0);
+        });
+    </script>
+</body>
+</html>
