@@ -13,14 +13,15 @@ Key Features:
 - Support for malformed HTML cleanup and parsing
 - Contact lookup and CSV enrichment based on AssignmentGroup values
 - Column transformation (Empty Column -> Owner, Actions -> Email)
-- Standalone processing of existing JSON report files
+- Standalone processing of existing report files (JSON or HTML format)
+- Flexible format detection and handling for ServiceNow report outputs
 - Backward compatibility with direct text content extraction
 
 Usage Examples:
     # Generate report and extract/enrich table data automatically
     python snow-v3.py
 
-    # Process existing report_output.json file to extract and enrich table data
+    # Process existing report file (JSON or HTML) to extract and enrich table data
     python snow-v3.py --process-json
 
     # Run table extraction and contact enrichment functionality tests
@@ -33,7 +34,7 @@ Input Files:
     - assignment_group_contact.csv: Contact mapping file (AssignmentGroup, Contact, Email)
 
 Output Files:
-    - report_output.json: Raw JSON response from ServiceNow
+    - report_output.json/html: Raw response from ServiceNow (JSON or HTML format)
     - extracted_table.csv: Extracted and enriched table data in CSV format
 
 Contact Enrichment Process:
@@ -306,8 +307,9 @@ class TableParser(HTMLParser):
             self._handle_table_start()
         elif self.in_table:
             self._handle_table_content_start(tag)
-        elif self._is_in_cell() and tag in self.meaningful_tags:
-            self._handle_nested_element_start(tag)
+            # Also check for nested meaningful elements within cells
+            if self._is_in_cell() and tag in self.meaningful_tags:
+                self._handle_nested_element_start(tag)
 
     def _handle_table_start(self):
         """Handle the start of a table tag."""
@@ -393,8 +395,9 @@ class TableParser(HTMLParser):
             self._handle_table_end()
         elif self.in_table:
             self._handle_table_content_end(tag)
-        elif self._is_in_cell() and tag in self.meaningful_tags:
-            self._handle_nested_element_end(tag)
+            # Also check for nested meaningful elements within cells
+            if self._is_in_cell() and tag in self.meaningful_tags:
+                self._handle_nested_element_end(tag)
 
     def _handle_table_end(self):
         """Handle the end of a table tag."""
@@ -544,14 +547,13 @@ class TableParser(HTMLParser):
         Args:
             data (str): Text data from HTML
         """
-        # Always add to current_cell for fallback
-        self.current_cell += data
-
         # If we're inside a nested element and haven't captured content yet, add to nested_content
         if self.nested_element_stack and not self.has_nested_content:
             self.nested_content += data
             logging.debug(f"Added nested data: '{data}' (total nested: '{self.nested_content}')")
         else:
+            # Only add to current_cell if we're not inside a nested element or already captured nested content
+            self.current_cell += data
             logging.debug(f"Added direct cell data: '{data}' (total direct: '{self.current_cell}')")
 
     def _log_ignored_data(self, data):
@@ -977,83 +979,165 @@ def enrich_csv_with_contacts(csv_file="extracted_table.csv", contact_file="assig
         logging.error(f"Unexpected error during CSV enrichment: {e}")
         return False
 
-def process_report_json_to_csv(json_filename="report_output.json", csv_filename="extracted_table.csv"):
+def _detect_file_format(filename):
     """
-    Processes the JSON report file to extract HTML table data and save as CSV.
+    Detect file format based on file extension.
 
     Args:
-        json_filename (str): Input JSON filename
+        filename (str): Input filename
+
+    Returns:
+        bool: True if JSON file, False if HTML file
+    """
+    file_extension = os.path.splitext(filename)[1].lower()
+    return file_extension == '.json'
+
+
+def _read_input_file(filename):
+    """
+    Read input file content with error handling.
+
+    Args:
+        filename (str): Input filename
+
+    Returns:
+        tuple: (file_content, success) where success is bool
+    """
+    try:
+        with open(filename, 'r', encoding='utf-8') as f:
+            file_content = f.read()
+        is_json = _detect_file_format(filename)
+        logging.info(f"Successfully loaded {'JSON' if is_json else 'HTML'} file")
+        return file_content, True
+    except FileNotFoundError:
+        logging.error(f"Input file not found: {filename}")
+        return None, False
+    except Exception as e:
+        logging.error(f"Error reading input file: {e}")
+        return None, False
+
+
+def _extract_html_from_json(json_content):
+    """
+    Extract HTML content from JSON structure.
+
+    Args:
+        json_content (str): JSON content as string
+
+    Returns:
+        tuple: (html_content, success) where success is bool
+    """
+    try:
+        data = json.loads(json_content)
+        # Navigate the JSON structure to find the content field
+        if 'widgets' in data and len(data['widgets']) > 0:
+            widget = data['widgets'][-1]  # the last widget contains the table
+            if 'content' in widget:
+                html_content = widget['content']
+                logging.info("Successfully extracted HTML content from JSON")
+                return html_content, True
+            else:
+                logging.error("No 'content' field found in last widget")
+                return None, False
+        else:
+            logging.error("No 'widgets' array found in JSON or widgets array is empty")
+            return None, False
+    except json.JSONDecodeError as e:
+        logging.error(f"Error parsing JSON file: {e}")
+        return None, False
+    except Exception as e:
+        logging.error(f"Error extracting HTML content from JSON: {e}")
+        return None, False
+
+
+def _extract_html_content(file_content, is_json_file):
+    """
+    Extract HTML content from file content based on file type.
+
+    Args:
+        file_content (str): Raw file content
+        is_json_file (bool): True if JSON file, False if HTML file
+
+    Returns:
+        tuple: (html_content, success) where success is bool
+    """
+    if is_json_file:
+        # Process JSON file - extract HTML from JSON structure
+        html_content, success = _extract_html_from_json(file_content)
+        return html_content, success
+    else:
+        # Process HTML file - use content directly
+        logging.info("Using HTML content directly from file")
+        return file_content, True
+
+
+def _enrich_csv_with_contact_info(csv_filename):
+    """
+    Enrich CSV file with contact information.
+
+    Args:
+        csv_filename (str): CSV filename to enrich
+
+    Returns:
+        bool: True if successful, False otherwise
+    """
+    logging.info("--- Step 2: Enriching CSV with contact information ---")
+    enrich_success = enrich_csv_with_contacts(csv_filename, "assignment_group_contact.csv")
+
+    if enrich_success:
+        logging.info("Successfully enriched CSV with contact information")
+    else:
+        logging.warning("Failed to enrich CSV with contact information, but basic table extraction succeeded")
+
+    return enrich_success
+
+
+def process_report_to_csv(input_filename="report_output.json", csv_filename="extracted_table.csv"):
+    """
+    Processes the report file (JSON or HTML) to extract HTML table data and save as CSV.
+
+    Args:
+        input_filename (str): Input filename (JSON or HTML)
         csv_filename (str): Output CSV filename
 
     Returns:
         bool: True if successful, False otherwise
     """
-    logging.info(f"Processing JSON report file: {json_filename}")
+    logging.info(f"Processing report file: {input_filename}")
 
-    # Read and parse JSON file
-    try:
-        with open(json_filename, 'r', encoding='utf-8') as f:
-            data = json.load(f)
-        logging.info("Successfully loaded JSON data")
-    except FileNotFoundError:
-        logging.error(f"JSON file not found: {json_filename}")
-        return False
-    except json.JSONDecodeError as e:
-        logging.error(f"Error parsing JSON file: {e}")
-        return False
-    except Exception as e:
-        logging.error(f"Error reading JSON file: {e}")
+    # Step 1: Read input file and detect format
+    file_content, read_success = _read_input_file(input_filename)
+    if not read_success:
         return False
 
-    # Extract HTML content from JSON
-    html_content = None
-    try:
-        # Navigate the JSON structure to find the content field
-        if 'widgets' in data and len(data['widgets']) > 0:
-            widget = data['widgets'][0]
-            if 'content' in widget:
-                html_content = widget['content']
-                logging.info("Successfully extracted HTML content from JSON")
-            else:
-                logging.error("No 'content' field found in first widget")
-                return False
-        else:
-            logging.error("No 'widgets' array found in JSON or widgets array is empty")
-            return False
-    except Exception as e:
-        logging.error(f"Error extracting HTML content from JSON: {e}")
+    # Step 2: Extract HTML content based on file type
+    is_json_file = _detect_file_format(input_filename)
+    html_content, extract_success = _extract_html_content(file_content, is_json_file)
+    if not extract_success or not html_content:
+        if not html_content:
+            logging.error("No HTML content found in input file")
         return False
 
-    if not html_content:
-        logging.error("No HTML content found in JSON")
-        return False
-
-    # Extract table data from HTML
+    # Step 3: Extract table data from HTML
     headers, rows = extract_first_table_from_html(html_content)
-
     if not headers and not rows:
         logging.warning("No table data extracted from HTML")
         return False
 
-    # Save to CSV
+    # Step 4: Save to CSV
     success = save_table_to_csv(headers, rows, csv_filename)
-
-    if success:
-        logging.info(f"Successfully processed {json_filename} and saved table data to {csv_filename}")
-
-        # Enrich CSV with contact information
-        logging.info("--- Step 2: Enriching CSV with contact information ---")
-        enrich_success = enrich_csv_with_contacts(csv_filename, "assignment_group_contact.csv")
-
-        if enrich_success:
-            logging.info("Successfully enriched CSV with contact information")
-        else:
-            logging.warning("Failed to enrich CSV with contact information, but basic table extraction succeeded")
-
-        return success  # Return success of basic extraction even if enrichment fails
-    else:
+    if not success:
         logging.error("Failed to save table data to CSV")
         return False
+
+    # Step 5: Process successful - log and enrich
+    logging.info(f"Successfully processed {input_filename} and saved table data to {csv_filename}")
+
+    # Step 6: Enrich CSV with contact information
+    _enrich_csv_with_contact_info(csv_filename)
+
+    # Return success of basic extraction even if enrichment fails
+    return True
 
 # --- Configuration ---
 
@@ -1072,10 +1156,15 @@ Examples:
 
   # Use custom proxy credentials
   python snow-v3.py --proxy-user myuser --proxy-pass mypass
+
+  # Use custom configuration file
+  python snow-v3.py --config-file my-custom-config.ini
         """
     )
     parser.add_argument('--proxy-user', help='Proxy authentication username (overrides SNOW_PROXY_USER env var)')
     parser.add_argument('--proxy-pass', help='Proxy authentication password (overrides SNOW_PROXY_PASS env var)')
+    parser.add_argument('--config-file', default='config.ini',
+                       help='Path to configuration file (default: config.ini)')
 
     return parser
 
@@ -1092,6 +1181,11 @@ def _get_proxy_config(user, password, host, port=8080):
 def _load_report_configs(config_parser):
     """Load configuration for multiple reports from environment variables and config file.
 
+    Dynamically detects and loads any number of reports from:
+    1. Environment variables (SNOW_REPORT1_*, SNOW_REPORT2_*, etc.)
+    2. Config file sections ([reports] section with reportN_* keys)
+    3. Legacy config file fallback for single report
+
     Args:
         config_parser: ConfigParser object for fallback values
 
@@ -1100,46 +1194,174 @@ def _load_report_configs(config_parser):
     """
     reports = []
 
-    # Load Report 1
-    report1 = {
-        'name': os.environ.get('SNOW_REPORT1_NAME', 'Report1'),
-        'url': (os.environ.get('SNOW_REPORT1_URL') or
-               config_parser.get('snow', 'report_url', fallback=None)),
-        'payload': (os.environ.get('SNOW_REPORT1_PAYLOAD') or
-                   config_parser.get('snow', 'report_payload', fallback=None)),
-        'output_json': os.environ.get('SNOW_REPORT1_OUTPUT_JSON', 'report1_output.json'),
-        'output_csv': os.environ.get('SNOW_REPORT1_OUTPUT_CSV', 'report1_extracted_table.csv')
-    }
+    # Step 1: Scan environment variables for SNOW_REPORTN_* patterns
+    env_reports = _discover_env_reports()
 
-    # Load Report 2
-    report2 = {
-        'name': os.environ.get('SNOW_REPORT2_NAME', 'Report2'),
-        'url': (os.environ.get('SNOW_REPORT2_URL') or
-               config_parser.get('snow', 'report_url', fallback=None)),
-        'payload': (os.environ.get('SNOW_REPORT2_PAYLOAD') or
-                   config_parser.get('snow', 'report_payload', fallback=None)),
-        'output_json': os.environ.get('SNOW_REPORT2_OUTPUT_JSON', 'report2_output.json'),
-        'output_csv': os.environ.get('SNOW_REPORT2_OUTPUT_CSV', 'report2_extracted_table.csv')
-    }
+    # Step 2: Scan config file for report configurations
+    config_reports = _discover_config_reports(config_parser)
 
-    # Only add reports that have required configuration
-    if report1['url'] and report1['payload']:
-        reports.append(report1)
-        logging.info(f"Loaded configuration for {report1['name']}")
-    else:
-        logging.warning(f"Skipping {report1['name']} - missing URL or payload configuration")
+    # Step 3: Merge and deduplicate reports (env vars take precedence)
+    all_report_numbers = set(env_reports.keys()) | set(config_reports.keys())
 
-    if report2['url'] and report2['payload']:
-        reports.append(report2)
-        logging.info(f"Loaded configuration for {report2['name']}")
-    else:
-        logging.warning(f"Skipping {report2['name']} - missing URL or payload configuration")
+    logging.info(f"Discovered report configurations for reports: {sorted(all_report_numbers)}")
+
+    for report_num in sorted(all_report_numbers):
+        # Environment variables take precedence over config file
+        if report_num in env_reports:
+            report_config = env_reports[report_num]
+            source = "environment variables"
+        else:
+            report_config = config_reports[report_num]
+            source = "config file"
+
+        # Validate required fields
+        if report_config['url'] and report_config['payload']:
+            reports.append(report_config)
+            logging.info(f"Loaded configuration for {report_config['name']} (Report {report_num}) from {source}")
+        else:
+            missing_fields = []
+            if not report_config['url']:
+                missing_fields.append('URL')
+            if not report_config['payload']:
+                missing_fields.append('payload')
+            logging.warning(f"Skipping {report_config['name']} (Report {report_num}) - missing {', '.join(missing_fields)}")
+
+    # Step 4: Handle legacy single report fallback if no reports found
+    if not reports:
+        logging.info("No numbered reports found, checking for legacy single report configuration...")
+        legacy_report = _load_legacy_report_config(config_parser)
+        if legacy_report:
+            reports.append(legacy_report)
 
     if not reports:
         logging.error("No valid report configurations found")
         sys.exit(1)
 
+    logging.info(f"Successfully loaded {len(reports)} report configuration(s)")
     return reports
+
+def _discover_env_reports():
+    """Discover report configurations from environment variables.
+
+    Scans for SNOW_REPORTN_* environment variables where N is a number.
+
+    Returns:
+        dict: Dictionary mapping report numbers to report configurations
+    """
+    import re
+
+    env_reports = {}
+    report_pattern = re.compile(r'^SNOW_REPORT(\d+)_(.+)$')
+
+    # Group environment variables by report number
+    report_vars = {}
+    for env_var, value in os.environ.items():
+        match = report_pattern.match(env_var)
+        if match:
+            report_num = int(match.group(1))
+            field_name = match.group(2).lower()
+
+            if report_num not in report_vars:
+                report_vars[report_num] = {}
+            report_vars[report_num][field_name] = value
+
+    # Convert to report configurations
+    for report_num, fields in report_vars.items():
+        report_config = {
+            'name': fields.get('name', f'Report{report_num}'),
+            'url': fields.get('url'),
+            'payload': fields.get('payload'),
+            'output_file': fields.get('output_file', f'report{report_num}_output.json'),
+            'output_csv': fields.get('output_csv', f'report{report_num}_extracted_table.csv')
+        }
+        env_reports[report_num] = report_config
+
+    return env_reports
+
+def _discover_config_reports(config_parser):
+    """Discover report configurations from config file.
+
+    Looks for report configurations in:
+    1. [reports] section with reportN_* keys
+    2. Individual [reportN] sections
+
+    Args:
+        config_parser: ConfigParser object
+
+    Returns:
+        dict: Dictionary mapping report numbers to report configurations
+    """
+    import re
+
+    config_reports = {}
+
+    # Method 1: Check [reports] section for reportN_* keys
+    if config_parser.has_section('reports'):
+        report_pattern = re.compile(r'^report(\d+)_(.+)$')
+        report_vars = {}
+
+        for key, value in config_parser.items('reports'):
+            match = report_pattern.match(key)
+            if match:
+                report_num = int(match.group(1))
+                field_name = match.group(2).lower()
+
+                if report_num not in report_vars:
+                    report_vars[report_num] = {}
+                report_vars[report_num][field_name] = value
+
+        # Convert to report configurations
+        for report_num, fields in report_vars.items():
+            report_config = {
+                'name': fields.get('name', f'Report{report_num}'),
+                'url': fields.get('url'),
+                'payload': fields.get('payload'),
+                'output_file': fields.get('output_file', f'report{report_num}_output.json'),
+                'output_csv': fields.get('output_csv', f'report{report_num}_extracted_table.csv')
+            }
+            config_reports[report_num] = report_config
+
+    # Method 2: Check for individual [reportN] sections
+    for section_name in config_parser.sections():
+        match = re.match(r'^report(\d+)$', section_name)
+        if match:
+            report_num = int(match.group(1))
+            section = config_parser[section_name]
+
+            report_config = {
+                'name': section.get('name', f'Report{report_num}'),
+                'url': section.get('url'),
+                'payload': section.get('payload'),
+                'output_file': section.get('output_file', f'report{report_num}_output.json'),
+                'output_csv': section.get('output_csv', f'report{report_num}_extracted_table.csv')
+            }
+            config_reports[report_num] = report_config
+
+    return config_reports
+
+def _load_legacy_report_config(config_parser):
+    """Load legacy single report configuration for backward compatibility.
+
+    Args:
+        config_parser: ConfigParser object
+
+    Returns:
+        dict or None: Report configuration dictionary or None if not found
+    """
+    # Check for legacy configuration in [snow] section
+    legacy_url = config_parser.get('snow', 'report_url', fallback=None)
+    legacy_payload = config_parser.get('snow', 'report_payload', fallback=None)
+
+    if legacy_url and legacy_payload:
+        return {
+            'name': 'Legacy Report',
+            'url': legacy_url,
+            'payload': legacy_payload,
+            'output_file': 'report_output.json',
+            'output_csv': 'extracted_table.csv'
+        }
+
+    return None
 
 def _validate_required_config(config):
     """Validates that all required configuration is present."""
@@ -1167,16 +1389,18 @@ def _setup_ssl_config(config):
     else:
         logging.info("SSL certificate verification is ENABLED.")
 
-def load_config_file():
-    """Load configuration from config.ini file.
-    
+def load_config_file(config_file="config.ini"):
+    """Load configuration from specified config file.
+
+    Args:
+        config_file (str): Path to the configuration file. Defaults to "config.ini".
+
     Returns:
         configparser.ConfigParser: Loaded configuration object
     """
     config = configparser.ConfigParser(interpolation=None)
-    config_file = 'config.ini'
     if os.path.exists(config_file):
-        config.read(config_file)    
+        config.read(config_file)
     return config
 
 def load_env_file():
@@ -1209,7 +1433,10 @@ def get_config(args):
     # Load .env file first
     load_env_file()
 
-    config_parser = load_config_file()
+    # Load configuration file (use custom path if specified)
+    config_file_path = getattr(args, 'config_file', 'config.ini')
+    logging.info(f"Loading configuration from: {config_file_path}")
+    config_parser = load_config_file(config_file_path)
 
     # Get proxy credentials with command-line precedence, then environment, then config file
     proxy_user = (args.proxy_user or
@@ -2018,23 +2245,35 @@ def fetch_single_report(session, report_config, x_user_token):
 
         log_response_headers(report_response, f"{report_config['name']} Response Headers")
 
-        # Assume response content is always JSON and save directly
-        try:
-            json_content = json.dumps(report_response.json(), indent=4)
-            save_content_to_file(json_content, report_config['output_json'], False)
+        # Detect content type based on output file extension
+        output_file = report_config['output_file']
+        file_extension = os.path.splitext(output_file)[1].lower()
+        is_json_output = file_extension == '.json'
 
-            # Process the JSON to extract table data and save as CSV
-            logging.info(f"--- Processing HTML table data from {report_config['name']} ---")
-            csv_success = process_report_json_to_csv(report_config['output_json'], report_config['output_csv'])
-            if csv_success:
-                logging.info(f"Successfully extracted, enriched, and saved {report_config['name']} table data to CSV")
-            else:
-                logging.warning(f"Failed to extract table data from {report_config['name']}")
+        # Try to save as JSON first if the output file suggests JSON format
+        if is_json_output:
+            try:
+                json_content = json.dumps(report_response.json(), indent=4)
+                save_content_to_file(json_content, output_file, False)
+                logging.info(f"Successfully saved {report_config['name']} as JSON")
+            except json.JSONDecodeError:
+                logging.warning(f"{report_config['name']} response is not valid JSON. Saving as raw text.")
+                # Change extension to .html or .txt for non-JSON content
+                alt_filename = output_file.replace('.json', '.html')
+                save_content_to_file(report_response.text, alt_filename, False)
+                output_file = alt_filename  # Update for CSV processing
+        else:
+            # Save as HTML/text directly
+            save_content_to_file(report_response.text, output_file, False)
+            logging.info(f"Successfully saved {report_config['name']} as HTML/text")
 
-        except json.JSONDecodeError:
-            logging.warning(f"{report_config['name']} response is not valid JSON. Saving as raw text.")
-            txt_filename = report_config['output_json'].replace('.json', '.txt')
-            save_content_to_file(report_response.text, txt_filename, False)
+        # Process the file to extract table data and save as CSV
+        logging.info(f"--- Processing HTML table data from {report_config['name']} ---")
+        csv_success = process_report_to_csv(output_file, report_config['output_csv'])
+        if csv_success:
+            logging.info(f"Successfully extracted, enriched, and saved {report_config['name']} table data to CSV")
+        else:
+            logging.warning(f"Failed to extract table data from {report_config['name']}")
 
         if report_response.status_code == HTTP_OK:
             logging.info(f"Successfully fetched {report_config['name']}.")
@@ -2294,24 +2533,31 @@ def test_contact_enrichment():
         return False
 
 def process_existing_report():
-    """Processes an existing report_output.json file to extract table data."""
-    logging.info("--- Processing Existing Report JSON File ---")
+    """Processes an existing report file (JSON or HTML) to extract table data."""
+    logging.info("--- Processing Existing Report File ---")
 
-    json_filename = "report_output.json"
-    csv_filename = "extracted_table.csv"
+    # Look for common report file names in order of preference
+    possible_files = ["report_output.json", "report_output.html", "report1_output.json", "report2_output.json"]
+    input_filename = None
 
-    if not os.path.exists(json_filename):
-        logging.error(f"JSON file not found: {json_filename}")
-        logging.info("Please ensure the report_output.json file exists in the current directory.")
+    for filename in possible_files:
+        if os.path.exists(filename):
+            input_filename = filename
+            break
+
+    if not input_filename:
+        logging.error("No report file found. Looked for: " + ", ".join(possible_files))
+        logging.info("Please ensure a report file exists in the current directory.")
         return False
 
-    success = process_report_json_to_csv(json_filename, csv_filename)
+    csv_filename = "extracted_table.csv"
+    success = process_report_to_csv(input_filename, csv_filename)
 
     if success:
-        logging.info(f"Successfully processed {json_filename} and saved table data to {csv_filename}")
+        logging.info(f"Successfully processed {input_filename} and saved table data to {csv_filename}")
         return True
     else:
-        logging.error("Failed to process existing report JSON file")
+        logging.error(f"Failed to process existing report file: {input_filename}")
         return False
 
 def main():
@@ -2322,7 +2568,7 @@ def main():
         # Parse command-line arguments
         parser = create_parser()
         parser.add_argument('--process-json', action='store_true',
-                          help='Process existing report_output.json file to extract table data')
+                          help='Process existing report file (JSON or HTML) to extract table data')
         parser.add_argument('--test', action='store_true',
                           help='Run table extraction functionality test')
         args = parser.parse_args()
