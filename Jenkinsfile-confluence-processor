@@ -1,0 +1,285 @@
+#!/usr/bin/env groovy
+
+/**
+ * Jenkins Pipeline: Confluence CSV Processor
+ * 
+ * Simplified pipeline that executes confluence_automation.py and processes its CSV output
+ * to generate an HTML table with conditional formatting.
+ * 
+ * Refactored from confluence_csv_processor.groovy to eliminate over-engineering
+ * and follow Jenkins pipeline best practices.
+ */
+
+pipeline {
+    agent any
+    
+    options {
+        timeout(time: 10, unit: 'MINUTES')
+        retry(2)
+        skipDefaultCheckout()
+    }
+    
+    environment {
+        PYTHON_SCRIPT = 'confluence_automation.py'
+        CSV_FILE = 'extracted_output.csv'
+        OUTPUT_FILE = 'confluence_table_output.html'
+        EXCLUDED_COLUMNS = 'Tags'
+    }
+    
+    stages {
+        stage('Checkout') {
+            steps {
+                checkout scm
+            }
+        }
+        
+        stage('Health Check') {
+            steps {
+                script {
+                    echo "[INFO] Performing health checks"
+                    
+                    // Check if Python script exists
+                    if (!fileExists(env.PYTHON_SCRIPT)) {
+                        error "Python script not found: ${env.PYTHON_SCRIPT}"
+                    }
+                    
+                    // Test file system write permissions
+                    def testFile = "test_${System.currentTimeMillis()}.tmp"
+                    try {
+                        writeFile file: testFile, text: 'test'
+                        if (isUnix()) {
+                            sh "rm ${testFile}"
+                        } else {
+                            bat "del ${testFile}"
+                        }
+                        echo "[INFO] File system check passed"
+                    } catch (Exception e) {
+                        error "File system check failed: ${e.message}"
+                    }
+                }
+            }
+        }
+        
+        stage('Execute Python Script') {
+            steps {
+                script {
+                    echo "[INFO] Executing Python script: ${env.PYTHON_SCRIPT}"
+                    
+                    def exitCode
+                    if (isUnix()) {
+                        exitCode = sh(script: "python3 ${env.PYTHON_SCRIPT}", returnStatus: true)
+                    } else {
+                        exitCode = bat(script: "python ${env.PYTHON_SCRIPT}", returnStatus: true)
+                    }
+                    
+                    if (exitCode != 0) {
+                        error "Python script failed with exit code: ${exitCode}"
+                    }
+                    
+                    // Verify CSV file was created
+                    if (!fileExists(env.CSV_FILE)) {
+                        error "Expected CSV file not found: ${env.CSV_FILE}"
+                    }
+                    
+                    echo "[INFO] Python script executed successfully"
+                }
+            }
+        }
+        
+        stage('Process CSV and Generate HTML') {
+            steps {
+                script {
+                    echo "[INFO] Processing CSV file: ${env.CSV_FILE}"
+                    
+                    // Read and process CSV
+                    def csvData = processCsvFile(env.CSV_FILE, env.EXCLUDED_COLUMNS)
+                    echo "[INFO] Processed ${csvData.data.size()} rows from CSV"
+                    
+                    // Generate HTML table
+                    def htmlTable = generateHtmlTable(csvData)
+                    
+                    // Save HTML output
+                    writeFile file: env.OUTPUT_FILE, text: htmlTable, encoding: 'UTF-8'
+                    echo "[INFO] HTML table saved to: ${env.OUTPUT_FILE}"
+                    
+                    // Archive the output
+                    archiveArtifacts artifacts: env.OUTPUT_FILE, fingerprint: true
+                }
+            }
+        }
+    }
+    
+    post {
+        always {
+            script {
+                // Clean up temporary files
+                if (fileExists(env.CSV_FILE)) {
+                    if (isUnix()) {
+                        sh "rm -f ${env.CSV_FILE}"
+                    } else {
+                        bat "del /f ${env.CSV_FILE} 2>nul || exit /b 0"
+                    }
+                }
+            }
+        }
+        success {
+            echo "\n=== EXECUTION SUMMARY ==="
+            echo "Python script: ${env.PYTHON_SCRIPT} - SUCCESS"
+            echo "CSV processing: ${env.CSV_FILE} - SUCCESS"
+            echo "HTML output: ${env.OUTPUT_FILE} - SUCCESS"
+            echo "Excluded columns: ${env.EXCLUDED_COLUMNS}"
+            echo "========================\n"
+        }
+        failure {
+            echo "[ERROR] Pipeline execution failed"
+        }
+    }
+}
+
+// ===== Helper Functions =====
+
+/**
+ * Process CSV file and filter out excluded columns
+ */
+def processCsvFile(String filename, String excludedColumns) {
+    try {
+        def csvContent = readFile(file: filename, encoding: 'UTF-8')
+        if (!csvContent?.trim()) {
+            error "CSV file is empty: ${filename}"
+        }
+        
+        def lines = csvContent.split('\n')
+        if (lines.length < 2) {
+            error "CSV file must contain at least header and one data row"
+        }
+        
+        // Parse header and exclude specified columns
+        def allHeaders = lines[0].split(',').collect { it.trim().replaceAll('"', '') }
+        def excludeList = excludedColumns.split(',').collect { it.trim() }
+        def headers = allHeaders.findAll { !excludeList.contains(it) }
+        
+        echo "[DEBUG] Original headers: ${allHeaders}"
+        echo "[DEBUG] Filtered headers: ${headers}"
+        
+        // Parse data rows
+        def data = []
+        for (int i = 1; i < lines.length; i++) {
+            def line = lines[i].trim()
+            if (line) {
+                def values = parseCsvLine(line)
+                if (values.size() == allHeaders.size()) {
+                    def row = [:]
+                    headers.each { header ->
+                        def index = allHeaders.indexOf(header)
+                        row[header] = values[index] ?: ''
+                    }
+                    data.add(row)
+                }
+            }
+        }
+        
+        return [headers: headers, data: data]
+        
+    } catch (Exception e) {
+        error "CSV processing failed: ${e.message}"
+    }
+}
+
+/**
+ * Parse a single CSV line handling quoted fields
+ */
+def parseCsvLine(String line) {
+    def values = []
+    def current = new StringBuilder()
+    def inQuotes = false
+    def i = 0
+    
+    while (i < line.length()) {
+        def c = line.charAt(i)
+        
+        if (c == '"') {
+            if (inQuotes && i + 1 < line.length() && line.charAt(i + 1) == '"') {
+                // Escaped quote
+                current.append('"')
+                i += 2
+            } else {
+                // Toggle quote state
+                inQuotes = !inQuotes
+                i++
+            }
+        } else if (c == ',' && !inQuotes) {
+            // Field separator
+            values.add(current.toString().trim())
+            current = new StringBuilder()
+            i++
+        } else {
+            current.append(c)
+            i++
+        }
+    }
+    
+    // Add the last field
+    values.add(current.toString().trim())
+    return values
+}
+
+/**
+ * Generate HTML table with conditional formatting
+ */
+def generateHtmlTable(csvData) {
+    def html = new StringBuilder()
+    html.append("<table border='1' style='border-collapse: collapse; width: 100%; font-family: Arial, sans-serif;'>\n")
+    
+    // Table header
+    html.append("<thead>\n<tr style='background-color: #f0f0f0;'>\n")
+    csvData.headers.each { header ->
+        html.append("<th style='padding: 8px; text-align: left; border: 1px solid #ddd;'>${escapeHtml(header)}</th>\n")
+    }
+    html.append("</tr>\n</thead>\n")
+    
+    // Table body with conditional formatting
+    html.append("<tbody>\n")
+    csvData.data.each { row ->
+        html.append("<tr>\n")
+        csvData.headers.each { header ->
+            def cellValue = row[header] ?: ''
+            def cellStyle = getCellStyle(header, cellValue)
+            html.append("<td style='padding: 8px; border: 1px solid #ddd;${cellStyle}'>${escapeHtml(cellValue)}</td>\n")
+        }
+        html.append("</tr>\n")
+    }
+    html.append("</tbody>\n")
+    html.append("</table>\n")
+    
+    return html.toString()
+}
+
+/**
+ * Get conditional cell styling for Impact and Risk columns
+ */
+def getCellStyle(String columnName, String cellValue) {
+    if (columnName.toLowerCase() in ['impact', 'risk']) {
+        def lowerValue = cellValue.toLowerCase()
+        
+        if (lowerValue.contains('high') || lowerValue.contains('critical')) {
+            return ' background-color: #ffcccc;'  // Light red
+        } else if (lowerValue.contains('medium') || lowerValue.contains('moderate')) {
+            return ' background-color: #ffcc99;'  // Light orange/amber
+        } else {
+            return ' background-color: #ccffcc;'  // Light green
+        }
+    }
+    return ''
+}
+
+/**
+ * Escape HTML special characters
+ */
+def escapeHtml(String text) {
+    if (!text) return ''
+    return text.replace('&', '&amp;')
+              .replace('<', '&lt;')
+              .replace('>', '&gt;')
+              .replace('"', '&quot;')
+              .replace("'", '&#39;')
+}

@@ -1,0 +1,26 @@
+2025-08-14 00:07:11,488 - INFO - Starting Confluence automation script
+2025-08-14 00:07:11,488 - ERROR - Script execution failed: Confluence credentials not found. Please set CONFLUENCE_USERNAME and CONFLUENCE_PASSWORD environment variables.
+2025-08-14 00:07:26,236 - INFO - Starting Confluence automation script
+2025-08-14 00:07:26,236 - ERROR - Script execution failed: Confluence credentials not found. Please set CONFLUENCE_USERNAME and CONFLUENCE_PASSWORD environment variables.
+2025-08-14 00:07:41,916 - INFO - Starting Confluence automation script
+2025-08-14 00:07:41,916 - ERROR - Script execution failed: Confluence credentials not found. Please set CONFLUENCE_USERNAME and CONFLUENCE_PASSWORD environment variables.
+2025-08-14 00:07:56,477 - INFO - Starting Confluence automation script
+2025-08-14 00:07:56,478 - INFO - Successfully read 7 rows from extracted_output.csv
+2025-08-14 00:07:56,478 - INFO - Filtered data: 3 Call_out rows, 4 other rows
+2025-08-14 00:07:56,478 - INFO - Creating page: Weekend Change Note - 2025-08-16
+2025-08-14 00:07:59,228 - ERROR - URL Error: [SSL: UNEXPECTED_EOF_WHILE_READING] EOF occurred in violation of protocol (_ssl.c:1006)
+2025-08-14 00:07:59,228 - ERROR - Script execution failed: Connection failed: URL Error: [SSL: UNEXPECTED_EOF_WHILE_READING] EOF occurred in violation of protocol (_ssl.c:1006)
+2025-08-14 00:08:48,761 - INFO - Successfully read 7 rows from extracted_output.csv
+2025-08-14 00:08:48,761 - INFO - Filtered data: 3 Call_out rows, 4 other rows
+2025-08-14 00:46:16,730 - INFO - Starting Confluence automation script
+2025-08-14 00:46:16,730 - ERROR - Script execution failed: Confluence credentials not found. Please set CONFLUENCE_USERNAME and CONFLUENCE_PASSWORD environment variables.
+2025-08-14 00:46:30,652 - INFO - Starting Confluence automation script
+2025-08-14 00:46:30,653 - ERROR - Script execution failed: Confluence credentials not found. Please set CONFLUENCE_USERNAME and CONFLUENCE_PASSWORD environment variables.
+2025-08-14 00:46:37,470 - INFO - Starting Confluence automation script
+2025-08-14 00:46:37,470 - ERROR - Script execution failed: Confluence credentials not found. Please set CONFLUENCE_USERNAME and CONFLUENCE_PASSWORD environment variables.
+2025-08-14 00:46:43,404 - INFO - Starting Confluence automation script
+2025-08-14 00:46:43,405 - INFO - Successfully read 7 rows from extracted_output.csv
+2025-08-14 00:46:43,405 - INFO - Filtered data: 3 Call_out rows, 4 other rows
+2025-08-14 00:46:43,406 - INFO - Creating page: Weekend Change Note - 2025-08-16
+2025-08-14 00:46:44,573 - ERROR - URL Error: [SSL: UNEXPECTED_EOF_WHILE_READING] EOF occurred in violation of protocol (_ssl.c:1006)
+2025-08-14 00:46:44,573 - ERROR - Script execution failed: Connection failed: URL Error: [SSL: UNEXPECTED_EOF_WHILE_READING] EOF occurred in violation of protocol (_ssl.c:1006)
